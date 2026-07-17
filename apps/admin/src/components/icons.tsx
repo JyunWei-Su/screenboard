@@ -86,6 +86,30 @@ export const IconBell = (p: P) => (
   </Svg>
 );
 
+export const IconInfo = (p: P) => (
+  <Svg {...p}>
+    <circle cx="12" cy="12" r="9" />
+    <path d="M12 11v5" />
+    <path d="M12 8h.01" />
+  </Svg>
+);
+
+export const IconAlertTriangle = (p: P) => (
+  <Svg {...p}>
+    <path d="m12 3 10 18H2L12 3z" />
+    <path d="M12 9v4" />
+    <path d="M12 17h.01" />
+  </Svg>
+);
+
+export const IconAlertOctagon = (p: P) => (
+  <Svg {...p}>
+    <path d="M7 2h10l5 5v10l-5 5H7l-5-5V7l5-5z" />
+    <path d="M12 8v5" />
+    <path d="M12 17h.01" />
+  </Svg>
+);
+
 export const IconUsers = (p: P) => (
   <Svg {...p}>
     <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" />

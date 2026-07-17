@@ -7,7 +7,7 @@ per-device Cloudflare Tunnel, Cloudflare Access browser SSH, and Debian kiosk de
 
 For a first deployment, copy `.env.example` to `.env`, fill in an API Token and the
 required domains/secrets, then run `bash scripts/deploy.sh` from the repository root.
-The script creates or finds D1, creates the R2 bucket and Queues, deploys the Worker
+The script creates or finds D1, creates the R2 bucket, deploys the Worker
 at `API_DOMAIN`, uploads Worker secrets, applies migrations, builds the admin console,
 and deploys it to Pages, including the `ADMIN_DOMAIN` custom-domain attachment and
 its proxied CNAME record.
@@ -29,14 +29,13 @@ automatically by ScreenBoard when a device is enrolled; do not create them manua
 
 ## 1. Create Cloudflare resources
 
-Install dependencies, then create the D1 database, R2 bucket, and Queues.
+Install dependencies, then create the D1 database and R2 bucket.
 
 ```bash
 npm install
 cd apps/api
 wrangler d1 create screenboard
 wrangler r2 bucket create screenboard
-wrangler queues create screenboard-events
 ```
 
 Copy the D1 `database_id` into `apps/api/wrangler.jsonc`.

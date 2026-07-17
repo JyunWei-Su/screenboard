@@ -44,22 +44,6 @@
       "new_sqlite_classes": ["DeviceConnection"]
     }
   ],
-  "queues": {
-    "producers": [
-      {
-        "binding": "EVENTS_QUEUE",
-        "queue": "screenboard-events"
-      }
-    ],
-    "consumers": [
-      {
-        "queue": "screenboard-events",
-        "max_batch_size": 10,
-        "max_batch_timeout": 5,
-        "max_retries": 5
-      }
-    ]
-  },
   "triggers": {
     // Every 5 min: sweep offline devices + threshold alerts. Daily 03:00: prune old health rows.
     "crons": ["*/5 * * * *", "0 3 * * *"]

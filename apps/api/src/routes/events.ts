@@ -8,7 +8,13 @@ app.use("*", requireAuth);
 app.get("/", async (c) => {
   const unresolved = c.req.query("unresolved");
   const deviceId = c.req.query("device_id");
-  let sql = "SELECT * FROM events";
+  const severity = c.req.query("severity");
+  const type = c.req.query("type")?.trim();
+  const query = c.req.query("q")?.trim();
+  const from = c.req.query("from")?.trim();
+  const to = c.req.query("to")?.trim();
+  const page = Math.max(1, Number(c.req.query("page")) || 1);
+  const limit = Math.min(100, Math.max(1, Number(c.req.query("limit")) || 20));
   const where: string[] = [];
   const binds: unknown[] = [];
   if (unresolved === "1") where.push("resolved_at IS NULL");
@@ -16,10 +22,42 @@ app.get("/", async (c) => {
     where.push("device_id = ?");
     binds.push(deviceId);
   }
-  if (where.length) sql += " WHERE " + where.join(" AND ");
-  sql += " ORDER BY created_at DESC LIMIT 200";
-  const rows = await c.env.DB.prepare(sql).bind(...binds).all();
-  return c.json(rows.results);
+  if (severity && ["info", "warning", "critical"].includes(severity)) {
+    where.push("severity = ?");
+    binds.push(severity);
+  }
+  if (type) {
+    where.push("type LIKE ?");
+    binds.push(`%${type}%`);
+  }
+  if (query) {
+    where.push("(message LIKE ? OR type LIKE ? OR device_id LIKE ?)");
+    binds.push(`%${query}%`, `%${query}%`, `%${query}%`);
+  }
+  if (from) {
+    where.push("created_at >= ?");
+    binds.push(from.replace("T", " "));
+  }
+  if (to) {
+    where.push("created_at <= ?");
+    binds.push(to.replace("T", " "));
+  }
+  const whereSql = where.length ? ` WHERE ${where.join(" AND ")}` : "";
+  const total = await c.env.DB.prepare(`SELECT COUNT(*) AS n FROM events${whereSql}`)
+    .bind(...binds)
+    .first<{ n: number }>();
+  const rows = await c.env.DB.prepare(
+    `SELECT events.*, devices.name AS device_name
+     FROM events LEFT JOIN devices ON devices.uuid = events.device_id${whereSql}
+     ORDER BY events.created_at DESC LIMIT ? OFFSET ?`,
+  ).bind(...binds, limit, (page - 1) * limit).all();
+  return c.json({
+    items: rows.results,
+    page,
+    limit,
+    total: total?.n ?? 0,
+    total_pages: Math.max(1, Math.ceil((total?.n ?? 0) / limit)),
+  });
 });
 
 app.post("/:id/resolve", requireRole("admin", "operator"), async (c) => {
@@ -45,56 +83,6 @@ app.delete("/:id", requireRole("admin", "operator"), async (c) => {
   const id = Number(c.req.param("id"));
   if (!Number.isInteger(id)) return c.json({ error: "invalid_id" }, 400);
   await c.env.DB.prepare("DELETE FROM events WHERE id = ?").bind(id).run();
-  return c.json({ ok: true });
-});
-
-// ---- Notification channels (Teams / generic webhook) ----
-
-app.get("/channels", async (c) => {
-  const rows = await c.env.DB.prepare(
-    "SELECT id, kind, url, events, enabled, created_at FROM notification_channels ORDER BY id",
-  ).all();
-  return c.json(rows.results);
-});
-
-app.post("/channels", requireRole("admin"), async (c) => {
-  const { kind, url, events } = await c.req.json<{
-    kind: "teams" | "webhook";
-    url: string;
-    events?: string;
-  }>();
-  if (!kind || !url) return c.json({ error: "missing_fields" }, 400);
-  const res = await c.env.DB.prepare(
-    "INSERT INTO notification_channels (kind, url, events) VALUES (?, ?, ?)",
-  )
-    .bind(kind, url, events || "*")
-    .run();
-  return c.json({ id: res.meta.last_row_id });
-});
-
-app.patch("/channels/:id", requireRole("admin"), async (c) => {
-  const { url, events, enabled } = await c.req.json<{
-    url?: string;
-    events?: string;
-    enabled?: boolean;
-  }>();
-  await c.env.DB.prepare(
-    "UPDATE notification_channels SET url = COALESCE(?, url), events = COALESCE(?, events), enabled = COALESCE(?, enabled) WHERE id = ?",
-  )
-    .bind(
-      url ?? null,
-      events ?? null,
-      enabled === undefined ? null : enabled ? 1 : 0,
-      Number(c.req.param("id")),
-    )
-    .run();
-  return c.json({ ok: true });
-});
-
-app.delete("/channels/:id", requireRole("admin"), async (c) => {
-  await c.env.DB.prepare("DELETE FROM notification_channels WHERE id = ?")
-    .bind(Number(c.req.param("id")))
-    .run();
   return c.json({ ok: true });
 });
 

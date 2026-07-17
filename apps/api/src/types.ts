@@ -5,7 +5,6 @@ export interface Env {
   DB: D1Database;
   BUCKET: R2Bucket;
   DEVICE_CONN: DurableObjectNamespace;
-  EVENTS_QUEUE: Queue<QueueEvent>;
 
   // Vars
   HEALTH_RETENTION_DAYS: string;
@@ -30,15 +29,6 @@ export interface AuthUser {
   name: string;
   role: Role;
   jti: string;
-}
-
-// Queue message for asynchronous notification dispatch
-export interface QueueEvent {
-  type: string; // EventType
-  device_id?: string | null;
-  severity: string;
-  message: string;
-  event_id?: number;
 }
 
 export type Variables = {

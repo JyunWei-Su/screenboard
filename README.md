@@ -16,7 +16,6 @@ remotely, monitor health, capture screenshots, and ship agent updates over the a
 | Database | Cloudflare **D1** (SQLite) |
 | Object storage | Cloudflare **R2** (media, screenshots, OTA binaries) |
 | Realtime / presence | **Durable Objects** (one per device, WebSocket Hibernation) |
-| Async / notifications | Cloudflare **Queues** |
 | Admin login | **Single TOTP** (RFC 6238), no passwords → session JWT |
 | Admin console | **React + Vite + Tailwind** |
 | Device agent | **Go** (single static binary) |
@@ -30,7 +29,7 @@ pruned by a daily cron.
 ```
 screenboard/
 ├─ apps/
-│  ├─ api/       # Workers API + D1 migrations + Durable Object + queue/cron handlers
+│  ├─ api/       # Workers API + D1 migrations + Durable Object + cron handlers
 │  ├─ admin/     # React admin console
 │  └─ player/    # Standalone/preview web player (static)
 ├─ agent/        # Go device agent (kiosk player control, health, OTA, screenshots)
@@ -50,7 +49,6 @@ npm install
 cd apps/api
 wrangler d1 create screenboard              # copy database_id into wrangler.jsonc
 wrangler r2 bucket create screenboard
-wrangler queues create screenboard-events
 ```
 
 Edit `apps/api/wrangler.jsonc`:
@@ -222,19 +220,12 @@ Build a new agent version, then in the admin console → **OTA** upload the bina
 (channel + version) and create a rollout (**all** / **group** / **canary %**).
 Agents verify the SHA-256 checksum, self-replace, and restart via systemd.
 
-## 8. Notifications
-
-Admin console → **Events → Notification channels**. Add a **Microsoft Teams** incoming
-webhook or a generic **Webhook** URL. Events (`device_offline`, `ota_failed`,
-`playlist_error`, `screenshot_error`, threshold alerts, …) are fanned out via Cloudflare
-Queues. Email is intentionally not included.
-
 ---
 
 ## Local development
 
 ```bash
-# API (local D1 + DO + Queues emulated by wrangler)
+# API (local D1 + DO emulated by wrangler)
 cd apps/api
 wrangler d1 migrations apply screenboard --local
 wrangler dev                       # http://localhost:8787
@@ -265,22 +256,16 @@ For local bootstrap, set the secrets in `apps/api/.dev.vars` (same keys as produ
 | 8. CMS (media, versions, tags) | `media*` tables, `routes/media.ts`, Media page |
 | 9. Users & RBAC | `users` + TOTP, `requireRole`, Users page (admin/operator/viewer) |
 | 10. Dashboard & stats | `routes/dashboard.ts`, Dashboard page |
-| 11. Notifications (Teams/Webhook) | Queues + `lib/notifications.ts`, Events page |
-| 12. Cloudflare integration | Workers/D1/R2/DO/Queues; Tunnel for optional remote debug |
+| 11. Cloudflare integration | Workers/D1/R2/DO; Tunnel for optional remote debug |
 
 ## Status & caveats
 
 - **Fully wired end-to-end**: enrollment, WebSocket command dispatch, health + presence,
   playlist resolution/playback, media library, screenshots, OTA checksum
-  verification, RBAC, notifications, dashboard, retention cron.
-- **Teams** uses the legacy MessageCard format (works with classic Incoming Webhook
-  connectors). Newer Teams "Workflows" webhooks expect Adaptive Cards — adjust
-  `dispatch()` in `lib/notifications.ts` if you use those.
+  verification, RBAC, dashboard, retention cron.
 - **Schedules** evaluate in **UTC**. Add a per-device/tenant timezone if you need local time.
 - **Multi-screen**: rotate/zoom/kiosk are applied; true per-monitor layout for multi-head
   setups is left as a follow-up (the `screen` index is stored but not fully driven).
-- **Notifications** are best-effort per channel (no per-channel retry/dedup beyond the
-  Queue's message-level retry).
 - **Remote SSH** requires a Cloudflare Zero Trust organization, a Cloudflare-managed
   domain, and the optional Worker configuration above. Its Access identity is separate
   from the ScreenBoard TOTP login.

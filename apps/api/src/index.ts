@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import { cors } from "hono/cors";
-import type { Env, QueueEvent, Variables } from "./types";
+import type { Env, Variables } from "./types";
 
 import authRoutes from "./routes/auth";
 import enrollRoutes from "./routes/enroll";
@@ -18,7 +18,6 @@ import dashboardRoutes from "./routes/dashboard";
 import usersRoutes from "./routes/users";
 import installRoutes from "./routes/install";
 
-import { consumeEvents } from "./lib/notifications";
 import { pruneRetention, sweepOffline } from "./lib/scheduled";
 import { DeviceConnection } from "./do/deviceConnection";
 
@@ -61,10 +60,6 @@ export default {
     } else {
       await sweepOffline(env);
     }
-  },
-
-  async queue(batch: MessageBatch<QueueEvent>, env: Env): Promise<void> {
-    await consumeEvents(batch, env);
   },
 };
 

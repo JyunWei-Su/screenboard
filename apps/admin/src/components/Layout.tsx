@@ -3,7 +3,6 @@ import { NavLink, Outlet, useLocation } from "react-router-dom";
 import { useAuth } from "../auth";
 import { useTheme } from "../theme";
 import {
-  IconBell,
   IconCalendar,
   IconClose,
   IconDashboard,
@@ -35,7 +34,6 @@ const nav: NavItem[] = [
   { to: "/media", label: "媒體", Icon: IconImage },
   { to: "/schedules", label: "排程", Icon: IconCalendar },
   { to: "/ota", label: "OTA", Icon: IconDownload },
-  { to: "/events", label: "事件", Icon: IconBell },
   { to: "/users", label: "使用者", Icon: IconUsers },
 ];
 

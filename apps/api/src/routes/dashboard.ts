@@ -21,9 +21,11 @@ app.get("/stats", async (c) => {
     total += r.n;
   }
 
-  const alerts = await c.env.DB.prepare(
-    "SELECT COUNT(*) AS n FROM events WHERE resolved_at IS NULL",
-  ).first<{ n: number }>();
+  const eventCounts = await c.env.DB.prepare(
+    "SELECT severity, COUNT(*) AS n FROM events WHERE resolved_at IS NULL GROUP BY severity",
+  ).all<{ severity: string; n: number }>();
+  const bySeverity: Record<string, number> = { info: 0, warning: 0, critical: 0 };
+  for (const row of eventCounts.results) bySeverity[row.severity] = row.n;
 
   const playback = await c.env.DB.prepare(
     "SELECT COALESCE(SUM(count), 0) AS n FROM playback_counters WHERE day >= date('now', '-7 days')",
@@ -41,9 +43,12 @@ app.get("/stats", async (c) => {
     total,
     online: byStatus.online,
     offline: byStatus.offline,
-    warning: byStatus.warning,
+    device_warning: byStatus.warning,
     maintenance: byStatus.maintenance,
-    open_alerts: alerts?.n ?? 0,
+    info_events: bySeverity.info,
+    warning_events: bySeverity.warning,
+    critical_events: bySeverity.critical,
+    open_alerts: bySeverity.info + bySeverity.warning + bySeverity.critical,
     online_rate: Number(onlineRate.toFixed(3)),
     playback_7d: playback?.n ?? 0,
     top_content: topContent.results,

@@ -24,7 +24,6 @@ unset CF_ACCOUNT_ID
 
 D1_DATABASE_NAME="${D1_DATABASE_NAME:-screenboard}"
 R2_BUCKET_NAME="${R2_BUCKET_NAME:-screenboard}"
-QUEUE_NAME="${QUEUE_NAME:-screenboard-events}"
 PAGES_PROJECT_NAME="${PAGES_PROJECT_NAME:-screenboard-admin}"
 WORKER_NAME="${WORKER_NAME:-screenboard-api}"
 WRANGLER=(node "$ROOT/node_modules/wrangler/bin/wrangler.js")
@@ -53,12 +52,9 @@ if [ -z "$d1_id" ]; then
   d1_id="$(printf '%s' "$d1_json" | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>process.stdout.write(JSON.parse(s).result.uuid))')"
 fi
 
-echo "==> Creating R2 bucket and Queues if absent"
+echo "==> Creating R2 bucket if absent"
 if ! "${WRANGLER[@]}" r2 bucket info "$R2_BUCKET_NAME" >/dev/null 2>&1; then
   "${WRANGLER[@]}" r2 bucket create "$R2_BUCKET_NAME"
-fi
-if ! "${WRANGLER[@]}" queues info "$QUEUE_NAME" >/dev/null 2>&1; then
-  "${WRANGLER[@]}" queues create "$QUEUE_NAME"
 fi
 
 tmp_config="$(mktemp "$ROOT/apps/api/.deploy.wrangler.XXXXXX.jsonc")"
@@ -69,7 +65,6 @@ sed -e "s/REPLACE_WITH_D1_DATABASE_ID/$d1_id/" \
     -e "s#https://screenboard-api.example.workers.dev#https://$API_DOMAIN#" \
     -e "s/\"database_name\": \"screenboard\"/\"database_name\": \"$D1_DATABASE_NAME\"/" \
     -e "s/\"bucket_name\": \"screenboard\"/\"bucket_name\": \"$R2_BUCKET_NAME\"/" \
-    -e "s/\"queue\": \"screenboard-events\"/\"queue\": \"$QUEUE_NAME\"/" \
     "$ROOT/apps/api/wrangler.jsonc" >"$tmp_config"
 # Add an exact Worker custom domain without altering the tracked configuration.
 sed -i "s#\"main\": \"src/index.ts\",#\"main\": \"src/index.ts\",\n  \"routes\": [{ \"pattern\": \"$API_DOMAIN\", \"custom_domain\": true }],#" "$tmp_config"
@@ -84,7 +79,7 @@ printf '{"JWT_SECRET":%s,"DEVICE_JWT_SECRET":%s,"BOOTSTRAP_TOKEN":%s,"TOTP_ENC_K
 
 echo "==> Uploading Worker secrets and deploying API"
 "${WRANGLER[@]}" secret bulk "$tmp_secrets" --config "$tmp_config"
-"${WRANGLER[@]}" d1 migrations apply "$D1_DATABASE_NAME" --remote --config "$tmp_config"
+"${WRANGLER[@]}" d1 migrations apply "$D1_DATABASE_NAME" --remote --cwd "$ROOT/apps/api" --config "$tmp_config"
 "${WRANGLER[@]}" deploy --config "$tmp_config" --keep-vars
 
 echo "==> Building and deploying admin console"

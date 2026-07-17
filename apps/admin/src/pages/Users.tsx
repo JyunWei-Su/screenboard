@@ -1,4 +1,5 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import QRCode from "qrcode";
 import { api } from "../api";
 import { useFetch } from "../hooks";
 import { useAuth } from "../auth";
@@ -32,6 +33,19 @@ export default function Users() {
   const [name, setName] = useState("");
   const [role, setRole] = useState("operator");
   const [provision, setProvision] = useState<Provision | null>(null);
+  const [qrCode, setQrCode] = useState("");
+
+  useEffect(() => {
+    if (!provision?.otpauth_uri) {
+      setQrCode("");
+      return;
+    }
+    let active = true;
+    QRCode.toDataURL(provision.otpauth_uri, { width: 220, margin: 1, errorCorrectionLevel: "M" })
+      .then((dataUrl) => { if (active) setQrCode(dataUrl); })
+      .catch(() => { if (active) setQrCode(""); });
+    return () => { active = false; };
+  }, [provision?.otpauth_uri]);
 
   if (!isAdmin)
     return (
@@ -81,22 +95,26 @@ export default function Users() {
       </div>
 
       {provision && (
-        <div className="card animate-slide-in space-y-2 border-brand-200 bg-brand-50 dark:border-brand-500/30 dark:bg-brand-500/10">
-          <div className="text-sm font-medium text-brand-700 dark:text-brand-200">
-            <b>{provision.name}</b> 的 TOTP — 僅顯示一次,請立即加入驗證器應用程式。
+        <div className="card animate-slide-in border-brand-200 bg-brand-50 p-4 dark:border-brand-500/30 dark:bg-brand-500/10">
+          <div className="grid gap-4 sm:grid-cols-[220px_1fr] sm:items-center">
+            <div className="flex min-h-[220px] items-center justify-center rounded-lg bg-white p-2 dark:bg-dark-raised">
+              {qrCode ? <img src={qrCode} width="220" height="220" alt={`${provision.name} 的 TOTP QR Code`} /> : <span className="text-xs text-slate-400">產生 QR Code…</span>}
+            </div>
+            <div className="space-y-3">
+              <div className="text-sm font-medium text-brand-700 dark:text-brand-200">
+                <b>{provision.name}</b> 的 TOTP — 請用驗證器應用程式掃描 QR Code；此資料僅顯示一次。
+              </div>
+              <div className="text-xs text-slate-600 dark:text-dark-muted">
+                無法掃描時可手動輸入密鑰：{" "}
+                <code className="break-all rounded bg-white px-1.5 py-0.5 dark:bg-dark-raised dark:text-dark-text">
+                  {provision.totp_secret}
+                </code>
+              </div>
+              <button className="btn-ghost btn-sm" onClick={() => setProvision(null)}>
+                關閉
+              </button>
+            </div>
           </div>
-          <div className="text-xs text-slate-600 dark:text-dark-muted">
-            密鑰:{" "}
-            <code className="rounded bg-white px-1.5 py-0.5 dark:bg-dark-raised dark:text-dark-text">
-              {provision.totp_secret}
-            </code>
-          </div>
-          <div className="break-all text-xs text-slate-500 dark:text-dark-subtle">
-            {provision.otpauth_uri}
-          </div>
-          <button className="btn-ghost btn-sm" onClick={() => setProvision(null)}>
-            關閉
-          </button>
         </div>
       )}
 

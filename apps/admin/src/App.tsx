@@ -11,7 +11,6 @@ import PlaylistEditor from "./pages/PlaylistEditor";
 import Media from "./pages/Media";
 import Schedules from "./pages/Schedules";
 import Ota from "./pages/Ota";
-import Events from "./pages/Events";
 import Users from "./pages/Users";
 
 export default function App() {
@@ -34,7 +33,6 @@ export default function App() {
         <Route path="/media" element={<Media />} />
         <Route path="/schedules" element={<Schedules />} />
         <Route path="/ota" element={<Ota />} />
-        <Route path="/events" element={<Events />} />
         <Route path="/users" element={<Users />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Route>

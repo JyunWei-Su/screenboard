@@ -23,12 +23,22 @@ type Player struct {
 	cfg    *Config
 	client *Client
 
-	mu       sync.Mutex
-	current  *ResolvedPlaylist
-	fileMap  map[int]string // item id -> local cached file path
-	chromium *exec.Cmd
+	mu           sync.Mutex
+	current      *ResolvedPlaylist
+	fileMap      map[int]string // item id -> local cached file path
+	chromium     *exec.Cmd
+	notification PlayerNotification
 
 	onPlayback func(PlaybackEvent) // relayed over the WS channel
+}
+
+// PlayerNotification is displayed by the local kiosk page. It never leaves the
+// device and is intentionally limited to operational status, not credentials.
+type PlayerNotification struct {
+	ID         uint64 `json:"id"`
+	Message    string `json:"message"`
+	Level      string `json:"level"` // info | success | warning | error
+	Persistent bool   `json:"persistent"`
 }
 
 func NewPlayer(cfg *Config, client *Client) *Player {
@@ -49,6 +59,7 @@ func (p *Player) StartServer() {
 	mux.HandleFunc("/playlist.json", p.handlePlaylistJSON)
 	mux.HandleFunc("/media/", p.handleMedia)
 	mux.HandleFunc("/event", p.handleEvent)
+	mux.HandleFunc("/notification.json", p.handleNotification)
 
 	addr := fmt.Sprintf("127.0.0.1:%d", p.cfg.PlayerPort)
 	go func() {
@@ -57,6 +68,25 @@ func (p *Player) StartServer() {
 			log.Printf("player server error: %v", err)
 		}
 	}()
+}
+
+func (p *Player) handleNotification(w http.ResponseWriter, _ *http.Request) {
+	p.mu.Lock()
+	notice := p.notification
+	p.mu.Unlock()
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(notice)
+}
+
+// Notify places a status message in the lower-left of the kiosk display.
+// A later notification replaces a persistent progress message with its result.
+func (p *Player) Notify(message, level string, persistent bool) {
+	p.mu.Lock()
+	p.notification.ID++
+	p.notification.Message = message
+	p.notification.Level = level
+	p.notification.Persistent = persistent
+	p.mu.Unlock()
 }
 
 func (p *Player) handlePlaylistJSON(w http.ResponseWriter, _ *http.Request) {

@@ -1,9 +1,7 @@
 package main
 
 import (
-	"crypto/ed25519"
 	"crypto/sha256"
-	"encoding/base64"
 	"encoding/hex"
 	"fmt"
 	"log"
@@ -21,51 +19,47 @@ const updateHelper = "/usr/local/bin/screenboard-apply-update"
 
 // MaybeUpdate checks for and, if authorized + verified, installs a new agent
 // binary, then exits so the service manager restarts the fresh version.
-func MaybeUpdate(client *Client, cfg *Config) {
+// The boolean is true only when an update was available (the successful path
+// exits the process after installation).
+func MaybeUpdate(client *Client, onUpdateAvailable func(version string)) (bool, error) {
 	upd, err := client.CheckUpdate(AgentVersion)
 	if err != nil {
-		log.Printf("ota: check failed: %v", err)
-		return
+		return false, fmt.Errorf("check: %w", err)
 	}
 	if !upd.UpdateAvailable {
-		return
+		return false, nil
 	}
 	log.Printf("ota: update available %s -> %s", AgentVersion, upd.Version)
+	if onUpdateAvailable != nil {
+		onUpdateAvailable(upd.Version)
+	}
 
 	staged := "/tmp/screenboard-agent.new"
 	if err := client.DownloadTo(upd.URL, staged); err != nil {
-		log.Printf("ota: download failed: %v", err)
-		return
+		return false, fmt.Errorf("download: %w", err)
 	}
 	defer os.Remove(staged)
 
 	data, err := os.ReadFile(staged)
 	if err != nil {
-		log.Printf("ota: read failed: %v", err)
-		return
+		return false, fmt.Errorf("read: %w", err)
 	}
 
 	sum := sha256.Sum256(data)
 	checksum := hex.EncodeToString(sum[:])
 	if checksum != upd.Checksum {
-		log.Printf("ota: checksum mismatch, aborting")
-		return
-	}
-	if err := verifySignature(cfg.OTAPublicKey, upd.Checksum, upd.Signature); err != nil {
-		log.Printf("ota: signature verification failed: %v", err)
-		return
+		return false, fmt.Errorf("checksum mismatch")
 	}
 	if err := os.Chmod(staged, 0o755); err != nil {
-		log.Printf("ota: chmod failed: %v", err)
-		return
+		return false, fmt.Errorf("prepare: %w", err)
 	}
 
 	if err := installBinary(staged, data); err != nil {
-		log.Printf("ota: install failed: %v", err)
-		return
+		return false, fmt.Errorf("install: %w", err)
 	}
 	log.Printf("ota: installed %s, restarting", upd.Version)
 	os.Exit(0)
+	return true, nil
 }
 
 // installBinary swaps the running executable for the staged one. It prefers the
@@ -126,26 +120,4 @@ func sameDirReplace(data []byte) error {
 		return err
 	}
 	return os.Rename(tmpName, self)
-}
-
-// verifySignature checks an ed25519 signature over the checksum hex string.
-// If no public key is configured, signature verification is skipped (checksum
-// still enforced).
-func verifySignature(pubB64, checksumHex, sigB64 string) error {
-	if pubB64 == "" {
-		log.Printf("ota: no OTA public key configured, skipping signature check")
-		return nil
-	}
-	pub, err := base64.StdEncoding.DecodeString(pubB64)
-	if err != nil || len(pub) != ed25519.PublicKeySize {
-		return fmt.Errorf("invalid public key")
-	}
-	sig, err := base64.StdEncoding.DecodeString(sigB64)
-	if err != nil {
-		return fmt.Errorf("invalid signature encoding")
-	}
-	if !ed25519.Verify(ed25519.PublicKey(pub), []byte(checksumHex), sig) {
-		return fmt.Errorf("signature does not verify")
-	}
-	return nil
 }

@@ -31,6 +31,23 @@ app.post("/:id/resolve", requireRole("admin", "operator"), async (c) => {
   return c.json({ ok: true });
 });
 
+app.delete("/batch", requireRole("admin", "operator"), async (c) => {
+  const { ids } = await c.req.json<{ ids?: unknown }>();
+  if (!Array.isArray(ids) || ids.length === 0 || ids.length > 100 || ids.some((id) => !Number.isInteger(id))) {
+    return c.json({ error: "invalid_ids" }, 400);
+  }
+  const placeholders = ids.map(() => "?").join(", ");
+  await c.env.DB.prepare(`DELETE FROM events WHERE id IN (${placeholders})`).bind(...ids).run();
+  return c.json({ ok: true });
+});
+
+app.delete("/:id", requireRole("admin", "operator"), async (c) => {
+  const id = Number(c.req.param("id"));
+  if (!Number.isInteger(id)) return c.json({ error: "invalid_id" }, 400);
+  await c.env.DB.prepare("DELETE FROM events WHERE id = ?").bind(id).run();
+  return c.json({ ok: true });
+});
+
 // ---- Notification channels (Teams / generic webhook) ----
 
 app.get("/channels", async (c) => {

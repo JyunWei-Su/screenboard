@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useRef, useState, type Dispatch, type SetStateAction } from "react";
 import { api } from "../api";
 import { useFetch } from "../hooks";
 import { useAuth } from "../auth";
@@ -10,7 +10,6 @@ interface Pkg {
   channel: string;
   version: string;
   checksum: string;
-  signature: string | null;
   notes: string | null;
   created_at: string;
 }
@@ -36,13 +35,14 @@ export default function Ota() {
   const fileRef = useRef<HTMLInputElement>(null);
   const [channel, setChannel] = useState("stable");
   const [version, setVersion] = useState("");
-  const [signature, setSignature] = useState("");
   const [busy, setBusy] = useState(false);
 
   const [pkgId, setPkgId] = useState("");
   const [strategy, setStrategy] = useState<"all" | "group" | "canary">("all");
   const [target, setTarget] = useState("");
   const [percent, setPercent] = useState(100);
+  const [selectedPackageIds, setSelectedPackageIds] = useState<Set<number>>(new Set());
+  const [selectedDeploymentIds, setSelectedDeploymentIds] = useState<Set<number>>(new Set());
 
   function detectedVersion(filename: string): string | null {
     const match = /^screenboard-agent-linux-(?:amd64|arm64)-v(\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?)$/.exec(filename);
@@ -58,10 +58,8 @@ export default function Ota() {
     try {
       const buf = await file.arrayBuffer();
       const q = new URLSearchParams({ channel, version: packageVersion });
-      if (signature) q.set("signature", signature);
       await api.uploadWithType(`/api/ota/packages?${q}`, "application/octet-stream", buf);
       setVersion("");
-      setSignature("");
       reloadPkgs();
     } finally {
       setBusy(false);
@@ -92,6 +90,28 @@ export default function Ota() {
     if (!confirm("要刪除此推送嗎?")) return;
     await api.del(`/api/ota/deployments/${id}`);
     reloadDeps();
+  }
+  function toggleSelection(setter: Dispatch<SetStateAction<Set<number>>>, id: number) {
+    setter((selected) => {
+      const next = new Set(selected);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+  async function deleteSelectedPackages() {
+    const ids = [...selectedPackageIds];
+    if (!ids.length || !confirm(`要刪除選取的 ${ids.length} 個 OTA 套件及其推送嗎？此操作無法復原。`)) return;
+    await api.del("/api/ota/packages/batch", { ids });
+    setSelectedPackageIds(new Set());
+    await Promise.all([reloadPkgs(), reloadDeps()]);
+  }
+  async function deleteSelectedDeployments() {
+    const ids = [...selectedDeploymentIds];
+    if (!ids.length || !confirm(`要刪除選取的 ${ids.length} 個 OTA 推送嗎？此操作無法復原。`)) return;
+    await api.del("/api/ota/deployments/batch", { ids });
+    setSelectedDeploymentIds(new Set());
+    await reloadDeps();
   }
 
   if (!isAdmin)
@@ -124,10 +144,6 @@ export default function Ota() {
               placeholder="從檔名自動偵測"
             />
           </div>
-          <div className="sm:col-span-2">
-            <label className="label">簽章(base64,選填)</label>
-            <input className="input" value={signature} onChange={(e) => setSignature(e.target.value)} />
-          </div>
         </div>
         <label className="btn-primary inline-flex cursor-pointer">
           {busy ? "上傳中…" : "選擇二進位檔並上傳"}
@@ -142,14 +158,20 @@ export default function Ota() {
 
       <div className="space-y-3">
         <h2 className="card-title">套件</h2>
+        <div className="flex justify-end gap-2">
+          <button className="btn-ghost" onClick={() => setSelectedPackageIds(new Set((pkgs ?? []).map((pkg) => pkg.id)))}>全選</button>
+          <button className="btn-danger" disabled={!selectedPackageIds.size} onClick={() => void deleteSelectedPackages()}>
+            刪除選取（{selectedPackageIds.size}）
+          </button>
+        </div>
         <TableCard>
           <table className="w-full min-w-[680px]">
             <thead>
               <tr>
+                <th className="th w-10" />
                 <th className="th">版本</th>
                 <th className="th">通道</th>
                 <th className="th">校驗碼</th>
-                <th className="th">已簽章</th>
                 <th className="th">建立時間</th>
                 <th className="th" />
               </tr>
@@ -157,10 +179,10 @@ export default function Ota() {
             <tbody>
               {(pkgs ?? []).map((p) => (
                 <tr key={p.id}>
+                  <td className="td"><input type="checkbox" checked={selectedPackageIds.has(p.id)} onChange={() => toggleSelection(setSelectedPackageIds, p.id)} aria-label={`選取 ${p.version}`} /></td>
                   <td className="td font-medium">{p.version}</td>
                   <td className="td">{p.channel}</td>
                   <td className="td font-mono text-xs">{p.checksum.slice(0, 12)}…</td>
-                  <td className="td">{p.signature ? "✓" : "—"}</td>
                   <td className="td whitespace-nowrap text-xs text-slate-500">{p.created_at}</td>
                   <td className="td text-right">
                     <button
@@ -240,10 +262,17 @@ export default function Ota() {
 
       <div className="space-y-3">
         <h2 className="card-title">推送</h2>
+        <div className="flex justify-end gap-2">
+          <button className="btn-ghost" onClick={() => setSelectedDeploymentIds(new Set((deps ?? []).map((deployment) => deployment.id)))}>全選</button>
+          <button className="btn-danger" disabled={!selectedDeploymentIds.size} onClick={() => void deleteSelectedDeployments()}>
+            刪除選取（{selectedDeploymentIds.size}）
+          </button>
+        </div>
         <TableCard>
           <table className="w-full min-w-[600px]">
             <thead>
               <tr>
+                <th className="th w-10" />
                 <th className="th">版本</th>
                 <th className="th">策略</th>
                 <th className="th">範圍</th>
@@ -254,6 +283,7 @@ export default function Ota() {
             <tbody>
               {(deps ?? []).map((d) => (
                 <tr key={d.id}>
+                  <td className="td"><input type="checkbox" checked={selectedDeploymentIds.has(d.id)} onChange={() => toggleSelection(setSelectedDeploymentIds, d.id)} aria-label={`選取 ${d.version}`} /></td>
                   <td className="td font-medium">{d.version}</td>
                   <td className="td">{label(otaStrategyLabels, d.strategy)}</td>
                   <td className="td">{d.strategy === "canary" ? `${d.percent}%` : d.target ?? "全部"}</td>
@@ -295,7 +325,7 @@ export default function Ota() {
                   </td>
                 </tr>
               ))}
-              {deps && deps.length === 0 && <EmptyRow colSpan={5}>尚無推送。</EmptyRow>}
+              {deps && deps.length === 0 && <EmptyRow colSpan={6}>尚無推送。</EmptyRow>}
             </tbody>
           </table>
         </TableCard>

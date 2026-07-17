@@ -1,3 +1,4 @@
+import { useEffect, useState } from "react";
 import { useParams, Link } from "react-router-dom";
 import { api, contentUrl } from "../api";
 import { useFetch } from "../hooks";
@@ -20,13 +21,21 @@ interface Device {
   group_id: number | null;
   playlist_id: number | null;
   display: string;
+  agent_settings: string;
   last_seen_at: string | null;
   health?: { cpu: number; memory: number; disk: number; uptime: number; ts: string } | null;
   active_playlist_id: number | null;
 }
 interface ScreenshotRow { id: number; taken_at: string; analysis: string | null; trigger: string }
 interface CommandRow { id: string; type: string; status: string; issued_at: string }
+interface CommandPage { items: CommandRow[]; page: number; limit: number; total: number; total_pages: number }
 interface NamedRow { id: number; name: string }
+interface AgentSettings {
+  health_interval_sec: number;
+  playlist_poll_sec: number;
+  screenshot_interval_sec: number;
+  ota_check_sec: number;
+}
 interface RemoteAccess {
   configured: boolean;
   enabled: boolean;
@@ -54,6 +63,7 @@ const CONFIRM_COMMANDS = new Set(["reboot", "shutdown", "reinstall"]);
 const commandTypeLabels: Record<string, string> = Object.fromEntries(
   COMMANDS.map((c) => [c.type, c.label]),
 );
+commandTypeLabels.apply_agent_settings = "套用週期設定";
 
 export default function DeviceDetail() {
   const { uuid } = useParams();
@@ -63,12 +73,28 @@ export default function DeviceDetail() {
   const { data: shots, reload: reloadShots } = useFetch<ScreenshotRow[]>(
     `/api/screenshots?device_id=${uuid}&limit=12`,
   );
-  const { data: cmds, reload: reloadCmds } = useFetch<CommandRow[]>(`/api/devices/${uuid}/commands`);
+  const [commandPage, setCommandPage] = useState(1);
+  const { data: commandHistory, reload: reloadCmds } = useFetch<CommandPage>(
+    `/api/devices/${uuid}/commands?page=${commandPage}&limit=20`,
+  );
   const { data: groups } = useFetch<NamedRow[]>("/api/groups");
   const { data: playlists } = useFetch<NamedRow[]>("/api/playlists");
   const { data: remoteAccess, reload: reloadRemoteAccess } = useFetch<RemoteAccess>(
     writable ? `/api/devices/${uuid}/remote-access` : null,
   );
+  const [agentSettings, setAgentSettings] = useState<AgentSettings>(DEFAULT_AGENT_SETTINGS);
+  const [selectedScreenshotIds, setSelectedScreenshotIds] = useState<Set<number>>(new Set());
+  const [selectedCommandIds, setSelectedCommandIds] = useState<Set<string>>(new Set());
+
+  useEffect(() => {
+    if (d) setAgentSettings(safeAgentSettings(d.agent_settings));
+  }, [d?.uuid, d?.agent_settings]);
+
+  useEffect(() => {
+    setSelectedScreenshotIds((selected) => new Set(
+      [...selected].filter((id) => (shots ?? []).some((shot) => shot.id === id)),
+    ));
+  }, [shots]);
 
   if (!d) return <div className="text-slate-400">載入中…</div>;
   const display = safeParse(d.display);
@@ -81,6 +107,10 @@ export default function DeviceDetail() {
   async function patch(body: Record<string, unknown>) {
     await api.patch(`/api/devices/${uuid}`, body);
     reload();
+  }
+  async function saveAgentSettings() {
+    await patch({ agent_settings: agentSettings });
+    setTimeout(reloadCmds, 500);
   }
   async function provisionRemoteAccess() {
     try {
@@ -95,6 +125,51 @@ export default function DeviceDetail() {
     if (!confirm("要刪除這張截圖嗎?此操作無法復原。")) return;
     await api.del(`/api/screenshots/${id}`);
     await reloadShots();
+  }
+  function toggleScreenshot(id: number) {
+    setSelectedScreenshotIds((selected) => {
+      const next = new Set(selected);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+  function selectAllScreenshots() {
+    const ids = (shots ?? []).map((shot) => shot.id);
+    const allSelected = ids.length > 0 && ids.every((id) => selectedScreenshotIds.has(id));
+    setSelectedScreenshotIds(allSelected ? new Set() : new Set(ids));
+  }
+  async function deleteSelectedScreenshots() {
+    const ids = [...selectedScreenshotIds];
+    if (!ids.length || !confirm(`要刪除選取的 ${ids.length} 張截圖嗎？此操作無法復原。`)) return;
+    await api.del("/api/screenshots/batch", { ids });
+    setSelectedScreenshotIds(new Set());
+    await reloadShots();
+  }
+  async function deleteCommand(id: string) {
+    if (!confirm("要刪除這筆指令歷史嗎？這不會取消已送到裝置的指令。")) return;
+    await api.del(`/api/devices/${uuid}/commands/${id}`);
+    await reloadCmds();
+  }
+  function toggleCommand(id: string) {
+    setSelectedCommandIds((selected) => {
+      const next = new Set(selected);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+  function selectAllCommands() {
+    const ids = (commandHistory?.items ?? []).map((command) => command.id);
+    const allSelected = ids.length > 0 && ids.every((id) => selectedCommandIds.has(id));
+    setSelectedCommandIds(allSelected ? new Set() : new Set(ids));
+  }
+  async function deleteSelectedCommands() {
+    const ids = [...selectedCommandIds];
+    if (!ids.length || !confirm(`要刪除選取的 ${ids.length} 筆指令歷史嗎？這不會取消已送到裝置的指令。`)) return;
+    await api.del(`/api/devices/${uuid}/commands/batch`, { ids });
+    setSelectedCommandIds(new Set());
+    await reloadCmds();
   }
 
   return (
@@ -255,17 +330,51 @@ export default function DeviceDetail() {
               </label>
             </div>
           </div>
+
+          <div>
+            <h2 className="mb-2 text-sm font-semibold text-slate-700 dark:text-slate-200">監控與更新週期</h2>
+            <div className="grid grid-cols-2 gap-2 text-sm">
+              <IntervalInput label="健康回報" value={agentSettings.health_interval_sec} min={10} onChange={(value) => setAgentSettings({ ...agentSettings, health_interval_sec: value })} disabled={!writable} />
+              <IntervalInput label="播放清單同步" value={agentSettings.playlist_poll_sec} min={10} onChange={(value) => setAgentSettings({ ...agentSettings, playlist_poll_sec: value })} disabled={!writable} />
+              <IntervalInput label="自動截圖" value={agentSettings.screenshot_interval_sec} min={0} onChange={(value) => setAgentSettings({ ...agentSettings, screenshot_interval_sec: value })} disabled={!writable} />
+              <IntervalInput label="OTA 更新檢查" value={agentSettings.ota_check_sec} min={60} onChange={(value) => setAgentSettings({ ...agentSettings, ota_check_sec: value })} disabled={!writable} />
+            </div>
+            <p className="mt-2 text-xs text-slate-500">單位為秒；自動截圖填 0 即關閉。儲存後 Agent 會自動重啟並套用設定。</p>
+            {writable && <button className="btn-primary mt-2" onClick={() => void saveAgentSettings()}>儲存週期設定</button>}
+          </div>
         </div>
       </div>
 
       <div className="card">
         <div className="mb-3 flex items-center justify-between">
           <h2 className="text-sm font-semibold text-slate-700 dark:text-slate-200">最近截圖</h2>
-          <button className="btn-ghost" onClick={() => reloadShots()}>重新整理</button>
+          <div className="flex items-center gap-2">
+            {writable && (
+              <>
+                <button className="btn-ghost" disabled={!shots?.length} onClick={selectAllScreenshots}>
+                  {(shots?.length ?? 0) > 0 && shots!.every((shot) => selectedScreenshotIds.has(shot.id)) ? "取消全選" : "全選"}
+                </button>
+                <button className="btn-danger" disabled={!selectedScreenshotIds.size} onClick={() => void deleteSelectedScreenshots()}>
+                  刪除選取（{selectedScreenshotIds.size}）
+                </button>
+              </>
+            )}
+            <button className="btn-ghost" onClick={() => reloadShots()}>重新整理</button>
+          </div>
         </div>
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-6">
           {(shots ?? []).map((s) => (
-            <div key={s.id}>
+            <div key={s.id} className="relative">
+              {writable && (
+                <label className="absolute left-2 top-2 z-10 rounded bg-white/90 p-1 shadow dark:bg-slate-900/90">
+                  <input
+                    type="checkbox"
+                    checked={selectedScreenshotIds.has(s.id)}
+                    onChange={() => toggleScreenshot(s.id)}
+                    aria-label={`選取 ${s.taken_at}`}
+                  />
+                </label>
+              )}
               <a href={contentUrl(`/api/content/screenshots/${s.id}`)} target="_blank" rel="noreferrer">
                 <img
                   src={contentUrl(`/api/content/screenshots/${s.id}`)}
@@ -288,27 +397,49 @@ export default function DeviceDetail() {
       </div>
 
       <div className="space-y-3">
-        <h2 className="card-title">指令歷史</h2>
+        <div className="flex items-center justify-between gap-3">
+          <h2 className="card-title">指令歷史</h2>
+          {writable && (
+            <div className="flex gap-2">
+              <button className="btn-ghost" onClick={selectAllCommands}>全選</button>
+              <button className="btn-danger" disabled={!selectedCommandIds.size} onClick={() => void deleteSelectedCommands()}>
+                刪除選取（{selectedCommandIds.size}）
+              </button>
+            </div>
+          )}
+        </div>
         <TableCard>
           <table className="w-full min-w-[420px]">
             <thead>
               <tr>
+                {writable && <th className="th w-10" />}
                 <th className="th">時間</th>
                 <th className="th">類型</th>
                 <th className="th">狀態</th>
+                {writable && <th className="th">操作</th>}
               </tr>
             </thead>
             <tbody>
-              {(cmds ?? []).map((c) => (
+              {(commandHistory?.items ?? []).map((c) => (
                 <tr key={c.id}>
+                  {writable && (
+                    <td className="td">
+                      <input type="checkbox" checked={selectedCommandIds.has(c.id)} onChange={() => toggleCommand(c.id)} aria-label={`選取 ${c.type}`} />
+                    </td>
+                  )}
                   <td className="td whitespace-nowrap text-xs">{c.issued_at}</td>
                   <td className="td">{label(commandTypeLabels, c.type)}</td>
                   <td className="td">{label(commandStatusLabels, c.status)}</td>
+                  {writable && (
+                    <td className="td">
+                      <button className="text-red-600 hover:underline" onClick={() => void deleteCommand(c.id)}>刪除</button>
+                    </td>
+                  )}
                 </tr>
               ))}
-              {cmds && cmds.length === 0 && (
+              {commandHistory && commandHistory.items.length === 0 && (
                 <tr className="hover:bg-transparent">
-                  <td className="td px-4 py-6 text-center text-sm text-slate-400" colSpan={3}>
+                  <td className="td px-4 py-6 text-center text-sm text-slate-400" colSpan={writable ? 5 : 3}>
                     尚未送出任何指令。
                   </td>
                 </tr>
@@ -316,6 +447,23 @@ export default function DeviceDetail() {
             </tbody>
           </table>
         </TableCard>
+        {commandHistory && (
+          <div className="flex items-center justify-between text-sm text-slate-500">
+            <span>共 {commandHistory.total} 筆，第 {commandHistory.page} / {commandHistory.total_pages} 頁</span>
+            <div className="flex gap-2">
+              <button
+                className="btn-ghost"
+                disabled={commandHistory.page <= 1}
+                onClick={() => setCommandPage((page) => Math.max(1, page - 1))}
+              >上一頁</button>
+              <button
+                className="btn-ghost"
+                disabled={commandHistory.page >= commandHistory.total_pages}
+                onClick={() => setCommandPage((page) => Math.min(commandHistory.total_pages, page + 1))}
+              >下一頁</button>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );
@@ -352,4 +500,29 @@ function safeParse(s: string): { kiosk: boolean; zoom: number; rotate: number; s
   } catch {
     return { kiosk: true, zoom: 1, rotate: 0, screen: 0 };
   }
+}
+
+const DEFAULT_AGENT_SETTINGS: AgentSettings = {
+  health_interval_sec: 60,
+  playlist_poll_sec: 30,
+  screenshot_interval_sec: 0,
+  ota_check_sec: 1800,
+};
+
+function safeAgentSettings(s: string): AgentSettings {
+  try {
+    const parsed = JSON.parse(s) as Partial<AgentSettings>;
+    return { ...DEFAULT_AGENT_SETTINGS, ...parsed };
+  } catch {
+    return DEFAULT_AGENT_SETTINGS;
+  }
+}
+
+function IntervalInput({ label, value, min, disabled, onChange }: { label: string; value: number; min: number; disabled: boolean; onChange: (value: number) => void }) {
+  return (
+    <label className="block">
+      <span className="mb-1 block text-xs text-slate-500">{label}（秒）</span>
+      <input className="input" type="number" min={min} max={86400} step="1" value={value} disabled={disabled} onChange={(e) => onChange(Number(e.target.value))} />
+    </label>
+  );
 }

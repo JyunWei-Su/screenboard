@@ -22,6 +22,30 @@ app.get("/", async (c) => {
   return c.json(rows.results);
 });
 
+// Remove multiple screenshots in one request, including their R2 objects.
+app.delete("/batch", requireRole("admin", "operator"), async (c) => {
+  const { ids } = await c.req.json<{ ids?: unknown }>();
+  if (!Array.isArray(ids) || ids.length === 0 || ids.length > 100) {
+    return c.json({ error: "invalid_ids" }, 400);
+  }
+  const uniqueIds = [...new Set(ids)];
+  if (!uniqueIds.every((id) => typeof id === "number" && Number.isInteger(id) && id > 0)) {
+    return c.json({ error: "invalid_ids" }, 400);
+  }
+
+  const placeholders = uniqueIds.map(() => "?").join(", ");
+  const shots = await c.env.DB.prepare(
+    `SELECT id, r2_key FROM screenshots WHERE id IN (${placeholders})`,
+  ).bind(...uniqueIds).all<{ id: number; r2_key: string }>();
+  if (shots.results.length) {
+    await c.env.BUCKET.delete(shots.results.map((shot) => shot.r2_key));
+    await c.env.DB.prepare(`DELETE FROM screenshots WHERE id IN (${placeholders})`)
+      .bind(...uniqueIds)
+      .run();
+  }
+  return c.json({ ok: true, deleted: shots.results.length });
+});
+
 // Remove both the metadata and image object so manual cleanup also frees R2 storage.
 app.delete("/:id", requireRole("admin", "operator"), async (c) => {
   const id = Number(c.req.param("id"));

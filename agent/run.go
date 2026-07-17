@@ -2,9 +2,11 @@ package main
 
 import (
 	"bytes"
+	"fmt"
 	"image/png"
 	"log"
 	"net/url"
+	"os"
 	"time"
 )
 
@@ -46,7 +48,9 @@ func (a *Agent) Run() {
 	if a.cfg.ScreenshotEvery > 0 {
 		go a.loop(time.Duration(a.cfg.ScreenshotEvery)*time.Second, a.autoScreenshot)
 	}
-	go a.loop(time.Duration(a.cfg.OTAEvery)*time.Second, func() { MaybeUpdate(a.client, a.cfg) })
+	// NetworkManager/DHCP/DNS may still be coming online just after boot. Delay
+	// the first background OTA check; a manual update check remains immediate.
+	go a.delayedLoop(90*time.Second, time.Duration(a.cfg.OTAEvery)*time.Second, a.autoUpdate)
 
 	a.ws.Run() // blocks
 }
@@ -91,6 +95,25 @@ func (a *Agent) loop(d time.Duration, fn func()) {
 	defer t.Stop()
 	for range t.C {
 		fn()
+	}
+}
+
+func (a *Agent) delayedLoop(initialDelay, interval time.Duration, fn func()) {
+	time.Sleep(initialDelay)
+	a.loop(interval, fn)
+}
+
+func (a *Agent) autoUpdate() {
+	if !CollectHealth(a.serverHostPort()).NetOK {
+		log.Printf("ota: skipped; API network route is not ready")
+		return
+	}
+	if _, err := MaybeUpdate(a.client, func(version string) {
+		a.player.Notify("正在更新至 "+version+"…", "warning", true)
+	}); err != nil {
+		// Background checks are best effort. Do not disturb signage with a boot
+		// timing/DNS error; an operator-initiated check still reports the error.
+		log.Printf("ota: %v", err)
 	}
 }
 
@@ -158,38 +181,113 @@ func (a *Agent) handleCommand(cmd ServerCommand) (bool, string) {
 		a.reportResolution()
 		a.reportHealth()
 	case "restart_player":
+		a.player.Notify("正在重新啟動播放器…", "warning", true)
 		a.player.LaunchChromium()
+		go a.notifyAfter("播放器已重新啟動", "success", time.Second)
 	case "switch_playlist":
 		a.syncPlaylist()
 	case "take_screenshot":
 		a.captureAndPost("manual")
 	case "check_update":
-		MaybeUpdate(a.client, a.cfg)
+		a.player.Notify("正在檢查並套用更新…", "warning", true)
+		updated, err := MaybeUpdate(a.client, func(version string) {
+			a.player.Notify("正在下載並套用 "+version+"…", "warning", true)
+		})
+		if err != nil {
+			a.player.Notify("更新失敗："+err.Error(), "error", false)
+			return false, err.Error()
+		}
+		if !updated {
+			a.player.Notify("已是最新版本", "success", false)
+		}
 	case "reboot":
+		a.player.Notify("裝置即將重新啟動…", "warning", true)
+		time.Sleep(1500 * time.Millisecond)
 		if err := Reboot(); err != nil {
+			a.player.Notify("重新啟動失敗："+err.Error(), "error", false)
 			return false, err.Error()
 		}
 	case "shutdown":
+		a.player.Notify("裝置即將關機…", "warning", true)
+		time.Sleep(1500 * time.Millisecond)
 		if err := Shutdown(); err != nil {
+			a.player.Notify("關機失敗："+err.Error(), "error", false)
 			return false, err.Error()
 		}
 	case "apply_display":
+		a.player.Notify("正在套用顯示設定…", "warning", true)
 		a.player.ApplyDisplay(displayFromPayload(cmd.Payload, a.cfg.Display))
+		go a.notifyAfter("顯示設定已套用", "success", time.Second)
+	case "apply_agent_settings":
+		a.player.Notify("正在套用週期設定…", "warning", true)
+		if err := a.applyAgentSettings(cmd.Payload); err != nil {
+			a.player.Notify("套用週期設定失敗："+err.Error(), "error", false)
+			return false, err.Error()
+		}
+		// The kiosk launcher restarts this process. Restarting gives every loop a
+		// fresh ticker using the newly persisted intervals, after the ACK is sent.
+		go func() {
+			time.Sleep(1500 * time.Millisecond)
+			os.Exit(0)
+		}()
 	case "repair_tunnel":
+		a.player.Notify("正在修復 SSH 連線…", "warning", true)
 		// Freshen the on-disk access token the helper reads, then reinstall the
 		// cloudflared connector so SSH remote access recovers over this channel.
 		_ = a.client.refresh()
 		if err := RepairTunnel(); err != nil {
+			a.player.Notify("修復 SSH 連線失敗："+err.Error(), "error", false)
 			return false, err.Error()
 		}
+		a.player.Notify("SSH 連線已修復", "success", false)
 	case "reinstall":
+		a.player.Notify("正在重新安裝，裝置即將重新啟動…", "warning", true)
+		time.Sleep(1500 * time.Millisecond)
 		if err := Reinstall(); err != nil {
+			a.player.Notify("重新安裝失敗："+err.Error(), "error", false)
 			return false, err.Error()
 		}
 	default:
 		return false, "unknown command"
 	}
 	return true, ""
+}
+
+func (a *Agent) notifyAfter(message, level string, delay time.Duration) {
+	time.Sleep(delay)
+	a.player.Notify(message, level, false)
+}
+
+func (a *Agent) applyAgentSettings(p map[string]interface{}) error {
+	health, err := intervalFromPayload(p, "health_interval_sec", 10, 3600)
+	if err != nil {
+		return err
+	}
+	playlist, err := intervalFromPayload(p, "playlist_poll_sec", 10, 3600)
+	if err != nil {
+		return err
+	}
+	screenshot, err := intervalFromPayload(p, "screenshot_interval_sec", 0, 86400)
+	if err != nil {
+		return err
+	}
+	ota, err := intervalFromPayload(p, "ota_check_sec", 60, 86400)
+	if err != nil {
+		return err
+	}
+	a.cfg.HealthInterval = health
+	a.cfg.PlaylistPoll = playlist
+	a.cfg.ScreenshotEvery = screenshot
+	a.cfg.OTAEvery = ota
+	return a.cfg.Save()
+}
+
+func intervalFromPayload(p map[string]interface{}, key string, min, max int) (int, error) {
+	v, ok := p[key].(float64)
+	if !ok || v != float64(int(v)) || v < float64(min) || v > float64(max) {
+		return 0, fmt.Errorf("invalid %s", key)
+	}
+	return int(v), nil
 }
 
 func displayFromPayload(p map[string]interface{}, cur Display) Display {

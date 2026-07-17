@@ -11,7 +11,7 @@
     { "type": "Text", "globs": ["**/*.sh"], "fallthrough": true }
   ],
   "vars": {
-    // Non-secret config. Secrets (JWT_SECRET, OTA_PUBLIC_KEY, etc.) via `wrangler secret put`.
+    // Non-secret config. Secrets (JWT_SECRET, DEVICE_JWT_SECRET, etc.) via `wrangler secret put`.
     "HEALTH_RETENTION_DAYS": "90",
     "OFFLINE_TIMEOUT_SECONDS": "90",
     "PUBLIC_API_URL": "https://screenboard-api.example.workers.dev"

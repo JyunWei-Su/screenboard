@@ -22,6 +22,7 @@ export type CommandType =
   | "take_screenshot"
   | "check_update"
   | "apply_display" // push display settings (zoom/rotate/etc.)
+  | "apply_agent_settings" // push reporting/polling/screenshot/OTA intervals
   | "repair_tunnel" // re-provision cloudflared so SSH remote access recovers
   | "reinstall"; // re-run the device installer as root, then reboot
 
@@ -64,6 +65,13 @@ export interface DisplaySettings {
   zoom: number; // 1.0 = 100%
   rotate: 0 | 90 | 180 | 270;
   screen: number; // primary screen index for multi-monitor
+}
+
+export interface AgentSettings {
+  health_interval_sec: number;
+  playlist_poll_sec: number;
+  screenshot_interval_sec: number; // 0 disables scheduled screenshots
+  ota_check_sec: number;
 }
 
 // ---- Health ----
@@ -153,5 +161,4 @@ export interface OtaUpdateResponse {
   version?: string;
   url?: string;
   checksum?: string; // sha256 hex
-  signature?: string; // base64 ed25519 signature of the checksum
 }

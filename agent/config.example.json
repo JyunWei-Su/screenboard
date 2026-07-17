@@ -2,7 +2,6 @@
   "server_url": "https://screenboard-api.example.workers.dev",
   "enrollment_token": "PASTE_ONE_TIME_ENROLLMENT_TOKEN_HERE",
   "channel": "stable",
-  "ota_public_key": "",
   "player_port": 8888,
   "health_interval_sec": 60,
   "playlist_poll_sec": 30,

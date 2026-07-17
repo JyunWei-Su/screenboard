@@ -177,10 +177,10 @@ export default function Layout() {
             數位看板管理
           </div>
           <div className="ml-auto flex items-center gap-2 text-sm">
-            <ThemeToggle />
             <span className="hidden text-slate-600 sm:inline dark:text-dark-muted">
               {user?.name} <span className="text-slate-400 dark:text-dark-subtle">({user?.role})</span>
             </span>
+            <ThemeToggle />
             <button className="btn-ghost btn-sm" onClick={() => logout()}>
               <IconLogout className="h-4 w-4" />
               <span className="hidden sm:inline">登出</span>

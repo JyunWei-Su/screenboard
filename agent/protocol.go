@@ -54,7 +54,6 @@ type OtaUpdate struct {
 	Version         string `json:"version"`
 	URL             string `json:"url"`
 	Checksum        string `json:"checksum"`
-	Signature       string `json:"signature"`
 }
 
 // Command channel messages.

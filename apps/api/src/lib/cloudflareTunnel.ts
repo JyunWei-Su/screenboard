@@ -8,6 +8,7 @@ interface CloudflareEnvelope<T> {
 
 interface TunnelResult { id: string; status?: string }
 interface AccessAppResult { id: string }
+interface AccessCaResult { public_key: string }
 interface DnsRecordResult { id: string }
 
 function configured(env: Env): boolean {
@@ -40,8 +41,19 @@ function allowedEmails(env: Env): string[] {
   return (env.CF_ACCESS_ALLOWED_EMAILS || "").split(",").map((s) => s.trim()).filter(Boolean);
 }
 
+export function allowedSshUsers(env: Env): string[] {
+  return [...new Set(allowedEmails(env)
+    .map((email) => email.split("@", 1)[0].toLowerCase())
+    .filter((name) => /^[a-z_][a-z0-9_-]{0,31}$/.test(name)))];
+}
+
 export async function provisionRemoteAccess(env: Env, device: { uuid: string; name: string }): Promise<{ ok: boolean; error?: string }> {
   if (!configured(env)) return { ok: false, error: "remote_access_not_configured" };
+  const emails = allowedEmails(env);
+  const sshUsers = allowedSshUsers(env);
+  if (!emails.length || !sshUsers.length) {
+    return { ok: false, error: "CF_ACCESS_ALLOWED_EMAILS must contain at least one valid Linux username prefix" };
+  }
   const hostname = hostnameFor(env, device.uuid);
   // Cloudflare may retain a deleted Tunnel name briefly. Keep the device UUID
   // for traceability but add a fresh suffix so reprovisioning never collides
@@ -72,30 +84,30 @@ export async function provisionRemoteAccess(env: Env, device: { uuid: string; na
       body: JSON.stringify({
         name: `ScreenBoard SSH: ${device.name}`,
         domain: hostname,
-        // Browser-rendered SSH is supported on self-hosted public applications.
-        // The older "ssh" application type falls back to its legacy key flow.
-        type: "self_hosted",
+        // BrowserSSHApplication: enables Cloudflare's browser-rendered terminal.
+        type: "ssh",
         app_launcher_visible: true,
         session_duration: "8h",
         destinations: [{ type: "public", uri: hostname }],
       }),
     });
-    const emails = allowedEmails(env);
-    if (emails.length) {
-      await cf(env, `/accounts/${env.CF_ACCOUNT_ID}/access/apps/${app.id}/policies`, {
-        method: "POST",
-        body: JSON.stringify({
-          name: "ScreenBoard SSH operators",
-          decision: "allow",
-          precedence: 1,
-          include: emails.map((email) => ({ email: { email } })),
-        }),
-      });
-    }
+    await cf(env, `/accounts/${env.CF_ACCOUNT_ID}/access/apps/${app.id}/policies`, {
+      method: "POST",
+      body: JSON.stringify({
+        name: "ScreenBoard SSH operators",
+        decision: "allow",
+        precedence: 1,
+        include: emails.map((email) => ({ email: { email } })),
+      }),
+    });
+    const ca = await cf<AccessCaResult>(env, `/accounts/${env.CF_ACCOUNT_ID}/access/apps/${app.id}/ca`, {
+      method: "POST",
+      body: "{}",
+    });
     await env.DB.prepare(
-      `INSERT INTO device_remote_access (device_id, tunnel_id, access_app_id, hostname, status, provisioning_version)
-       VALUES (?, ?, ?, ?, 'inactive', 2)`,
-    ).bind(device.uuid, tunnel.id, app.id, hostname).run();
+      `INSERT INTO device_remote_access (device_id, tunnel_id, access_app_id, hostname, status, ssh_ca_public_key, provisioning_version)
+       VALUES (?, ?, ?, ?, 'inactive', ?, 3)`,
+    ).bind(device.uuid, tunnel.id, app.id, hostname, ca.public_key).run();
     return { ok: true };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
@@ -103,7 +115,7 @@ export async function provisionRemoteAccess(env: Env, device: { uuid: string; na
     if (tunnel) {
       await env.DB.prepare(
         `INSERT INTO device_remote_access (device_id, tunnel_id, access_app_id, hostname, status, last_error, provisioning_version)
-         VALUES (?, ?, ?, ?, 'error', ?, 2) ON CONFLICT(device_id) DO UPDATE SET status='error', last_error=excluded.last_error, provisioning_version=excluded.provisioning_version, updated_at=datetime('now')`,
+         VALUES (?, ?, ?, ?, 'error', ?, 3) ON CONFLICT(device_id) DO UPDATE SET status='error', last_error=excluded.last_error, provisioning_version=excluded.provisioning_version, updated_at=datetime('now')`,
       ).bind(device.uuid, tunnel.id, app?.id ?? null, hostname, message).run();
     }
     return { ok: false, error: message };

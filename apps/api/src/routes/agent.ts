@@ -4,7 +4,7 @@ import { deviceAuth } from "../auth";
 import { deviceStub } from "../lib/command";
 import { buildResolvedPlaylist, resolvePlaylistId } from "../lib/resolve";
 import { recordEvent } from "../lib/notify";
-import { createTunnelToken, remoteAccessConfigured } from "../lib/cloudflareTunnel";
+import { allowedSshUsers, createTunnelToken, remoteAccessConfigured } from "../lib/cloudflareTunnel";
 import type { HealthSample, OtaUpdateResponse } from "@screenboard/shared";
 
 // Device-facing endpoints (agent), all behind deviceAuth.
@@ -166,8 +166,8 @@ app.get("/playlist", async (c) => {
 app.get("/remote-access", async (c) => {
   const uuid = c.get("deviceUuid");
   const row = await c.env.DB.prepare(
-    "SELECT tunnel_id, hostname, status FROM device_remote_access WHERE device_id = ?",
-  ).bind(uuid).first<{ tunnel_id: string; hostname: string; status: string }>();
+    "SELECT tunnel_id, hostname, status, ssh_ca_public_key FROM device_remote_access WHERE device_id = ?",
+  ).bind(uuid).first<{ tunnel_id: string; hostname: string; status: string; ssh_ca_public_key: string | null }>();
   if (!row) {
     return c.json({
       enabled: false,
@@ -178,7 +178,13 @@ app.get("/remote-access", async (c) => {
   try {
     const tunnelToken = await createTunnelToken(c.env, row.tunnel_id);
     if (!tunnelToken) return c.json({ enabled: false, configured: remoteAccessConfigured(c.env), reason: "token_unavailable" });
-    return c.json({ enabled: true, hostname: row.hostname, tunnel_token: tunnelToken });
+    return c.json({
+      enabled: true,
+      hostname: row.hostname,
+      tunnel_token: tunnelToken,
+      ssh_ca_public_key: row.ssh_ca_public_key,
+      ssh_users: allowedSshUsers(c.env),
+    });
   } catch (error) {
     console.error(JSON.stringify({ event: "remote_access_token_failed", device_id: uuid, error: String(error) }));
     return c.json({ enabled: false, configured: true, reason: "token_unavailable" }, 503);
@@ -192,10 +198,10 @@ app.get("/update", async (c) => {
   const current = c.req.query("current") || "";
 
   const pkg = await c.env.DB.prepare(
-    "SELECT id, version, r2_key, checksum, signature FROM ota_packages WHERE channel = ? ORDER BY created_at DESC LIMIT 1",
+    "SELECT id, version, r2_key, checksum FROM ota_packages WHERE channel = ? ORDER BY created_at DESC LIMIT 1",
   )
     .bind(channel)
-    .first<{ id: number; version: string; checksum: string; signature: string | null }>();
+    .first<{ id: number; version: string; checksum: string }>();
 
   const none: OtaUpdateResponse = { update_available: false };
   if (!pkg || pkg.version === current) return c.json(none);
@@ -243,7 +249,6 @@ app.get("/update", async (c) => {
     version: pkg.version,
     url: `${base}/api/content/ota/${pkg.id}`,
     checksum: pkg.checksum,
-    signature: pkg.signature ?? undefined,
   };
   return c.json(resp);
 });

@@ -36,8 +36,6 @@ screenboard/
 ├─ agent/        # Go device agent (kiosk player control, health, OTA, screenshots)
 ├─ packages/
 │  └─ shared/    # Shared TypeScript protocol types
-├─ tools/
-│  └─ ota-sign/  # ed25519 keygen + OTA package signer
 └─ docs/         # Architecture design
 ```
 
@@ -76,19 +74,17 @@ Universal SSL. Access policies allow only the configured email addresses.
 Configure an Identity Provider or email OTP in Cloudflare Zero Trust before
 enrolling a device.
 
-#### Required manual Cloudflare setting for browser SSH
+#### Browser SSH provisioning
 
-After a device creates its `ScreenBoard SSH: <device>` Access application, open
-**Cloudflare Zero Trust → Access controls → Applications → Configure**, enable
-**Allow access through browser-based RDP, SSH, or VNC sessions**, select **SSH**,
-then save. This setting is required before the **Open SSH terminal** link can be
-used for a browser-rendered SSH session. A TLS protocol error on an old
+ScreenBoard creates a Cloudflare `ssh` Access application and its application-specific
+short-lived certificate authority automatically. The installer trusts that CA in
+`sshd` and creates unprivileged Linux users from `CF_ACCESS_ALLOWED_EMAILS` email
+prefixes (for example, `ops@example.com` creates `ops`). A TLS protocol error on an old
 `<device-uuid>.ssh.<zone>` hostname is instead a certificate-depth issue; use
 **Reprovision SSH** to migrate it to `ssh-<device-uuid>.<zone>`.
 
-For browser-rendered SSH, the local Debian username must match the prefix of the
-Access login email. For example, `ops@example.com` requires an `ops` Linux user.
-Create that account and grant `sudo` only when it should have administrative access.
+Browser SSH users are not granted `sudo`. Add a separate, narrowly-scoped sudoers rule
+only when an operator needs administrative access.
 
 ## 2. Secrets
 
@@ -211,7 +207,7 @@ sudo apt install --no-install-recommends xserver-xorg xinit openbox chromium scr
 sudo install -Dm755 dist/screenboard-agent-linux-amd64-v0.1.0 /usr/local/bin/screenboard-agent
 sudo mkdir -p /etc/screenboard
 sudo cp agent/config.example.json /etc/screenboard/agent.json
-# edit agent.json: set server_url, paste enrollment_token, optionally ota_public_key
+# edit agent.json: set server_url and paste enrollment_token
 sudo cp agent/systemd/screenboard-agent.service /etc/systemd/system/
 sudo systemctl enable --now screenboard-agent
 ```
@@ -222,17 +218,9 @@ and starts reporting health.
 
 ## 7. OTA updates
 
-```bash
-cd tools/ota-sign
-go run . keygen             # put public_key into each agent's config (ota_public_key)
-
-# Build a new agent version and sign its checksum (build.sh prints sha256):
-go run . sign <sha256-hex> <private-key-b64>   # -> base64 signature
-```
-
-Then in the admin console → **OTA**: upload the new binary (channel + version + optional
-signature), and create a rollout (**all** / **group** / **canary %**). Agents poll,
-verify checksum + ed25519 signature, self-replace, and restart via systemd.
+Build a new agent version, then in the admin console → **OTA** upload the binary
+(channel + version) and create a rollout (**all** / **group** / **canary %**).
+Agents verify the SHA-256 checksum, self-replace, and restart via systemd.
 
 ## 8. Notifications
 
@@ -273,7 +261,7 @@ For local bootstrap, set the secrets in `apps/api/.dev.vars` (same keys as produ
 | 4. Screen control (kiosk/zoom/rotate) | `agent/player.go`, commands via `POST /api/devices/:uuid/commands` |
 | 5. Health & online status | `POST /api/agent/health`, DO presence + alarm, cron sweep, Dashboard |
 | 6. Screenshots (auto + on demand) | `agent` capture + `/api/agent/screenshot`, black-screen detection, DeviceDetail |
-| 7. OTA (stable/beta, canary) | `ota_packages`/`ota_deployments`, `agent/ota.go`, `tools/ota-sign`, Ota page |
+| 7. OTA (stable/beta, canary) | `ota_packages`/`ota_deployments`, `agent/ota.go`, Ota page |
 | 8. CMS (media, versions, tags) | `media*` tables, `routes/media.ts`, Media page |
 | 9. Users & RBAC | `users` + TOTP, `requireRole`, Users page (admin/operator/viewer) |
 | 10. Dashboard & stats | `routes/dashboard.ts`, Dashboard page |
@@ -283,7 +271,7 @@ For local bootstrap, set the secrets in `apps/api/.dev.vars` (same keys as produ
 ## Status & caveats
 
 - **Fully wired end-to-end**: enrollment, WebSocket command dispatch, health + presence,
-  playlist resolution/playback, media library, screenshots, OTA with signature
+  playlist resolution/playback, media library, screenshots, OTA checksum
   verification, RBAC, notifications, dashboard, retention cron.
 - **Teams** uses the legacy MessageCard format (works with classic Incoming Webhook
   connectors). Newer Teams "Workflows" webhooks expect Adaptive Cards — adjust

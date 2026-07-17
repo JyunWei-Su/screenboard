@@ -50,7 +50,7 @@ export DEBIAN_FRONTEND=noninteractive
 apt-get update -y
 apt-get install -y --no-install-recommends \
   xserver-xorg xinit openbox chromium scrot x11-xserver-utils x11-utils xbindkeys \
-  ca-certificates curl unclutter dbus-x11 fonts-liberation openssh-server sudo
+  ca-certificates curl unclutter dbus-x11 fonts-liberation fonts-noto-cjk openssh-server sudo
 CHROMIUM_BIN="$(command -v chromium || command -v chromium-browser || echo chromium)"
 
 # cloudflared is supplied by Cloudflare's signed package repository.
@@ -89,7 +89,10 @@ mv -f "$AGENT_TMP" /usr/local/bin/screenboard-agent
 trap - EXIT
 
 echo "==> [4/8] Writing config"
-install -d -m 755 /etc/screenboard
+# The kiosk Agent uses atomic writes (agent.json.tmp then rename), so it needs
+# write access to this directory as well as the config file. Keep it private to
+# root and the kiosk account; it contains device access/refresh credentials.
+install -d -o root -g "$KIOSK_USER" -m 770 /etc/screenboard
 install -d -o "$KIOSK_USER" -g "$KIOSK_USER" -m 755 /var/lib/screenboard/cache
 if [ ! -f /etc/screenboard/agent.json ]; then
   cat >/etc/screenboard/agent.json <<JSON
@@ -130,6 +133,28 @@ if [ -n "$ACCESS_TOKEN" ]; then
     cloudflared service install "$TUNNEL_TOKEN"
     systemctl enable --now cloudflared
     echo "    Cloudflare Tunnel installed"
+
+    SSH_CA_PUBLIC_KEY="$(printf '%s' "$REMOTE_ACCESS" | sed -n 's/.*"ssh_ca_public_key"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')"
+    SSH_USERS="$(printf '%s' "$REMOTE_ACCESS" | sed -n 's/.*"ssh_users"[[:space:]]*:[[:space:]]*\[\([^]]*\)\].*/\1/p' | tr -d '" ' | tr ',' ' ')"
+    if [ -n "$SSH_CA_PUBLIC_KEY" ]; then
+      printf '%s\n' "$SSH_CA_PUBLIC_KEY" >/etc/ssh/screenboard_access_ca.pub
+      chown root:root /etc/ssh/screenboard_access_ca.pub
+      chmod 644 /etc/ssh/screenboard_access_ca.pub
+      cat >/etc/ssh/sshd_config.d/50-screenboard.conf <<'SSH'
+PermitRootLogin no
+PasswordAuthentication no
+KbdInteractiveAuthentication no
+PubkeyAuthentication yes
+TrustedUserCAKeys /etc/ssh/screenboard_access_ca.pub
+SSH
+      for SSH_USER in $SSH_USERS; do
+        id "$SSH_USER" >/dev/null 2>&1 || useradd -m -s /bin/bash "$SSH_USER"
+      done
+      systemctl restart ssh
+      echo "    Browser SSH certificate authority installed"
+    else
+      echo "    Browser SSH CA is unavailable; Tunnel is installed but SSH certificate login is not ready"
+    fi
   else
     REMOTE_REASON="$(printf '%s' "$REMOTE_ACCESS" | sed -n 's/.*"reason"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')"
     case "$REMOTE_REASON" in
@@ -146,6 +171,7 @@ if [ -n "$ACCESS_TOKEN" ]; then
   fi
 fi
 chown "$KIOSK_USER:$KIOSK_USER" /etc/screenboard/agent.json
+chmod 600 /etc/screenboard/agent.json
 
 echo "==> [6/8] Console autologin on tty1"
 install -d /etc/systemd/system/getty@tty1.service.d
@@ -188,7 +214,10 @@ chmod 755 /usr/local/bin/screenboard-debug
 
 cat >"$HOME_DIR/.xbindkeysrc" <<'XBINDKEYS'
 "/usr/local/bin/screenboard-debug"
-  Control+Shift + F12
+  Super_L
+
+"/usr/local/bin/screenboard-debug"
+  Super_R
 XBINDKEYS
 cat >"$HOME_DIR/.bash_profile" <<'PROF'
 if [ -z "$DISPLAY" ] && [ "$XDG_VTNR" = "1" ]; then
@@ -215,7 +244,7 @@ chown "$KIOSK_USER:$KIOSK_USER" "$HOME_DIR/.bash_profile" "$HOME_DIR/.xinitrc" "
 
 # OTA self-update helper. The kiosk Agent runs unprivileged and its binary is
 # root-owned in /usr/local/bin, so it cannot replace itself. It stages a
-# checksum/signature-verified binary and calls this helper (via the sudoers rule
+# checksum-verified binary and calls this helper (via the sudoers rule
 # below) to swap it in atomically as root. The destination is hardcoded; only
 # the staged source path comes from the caller.
 cat >/usr/local/bin/screenboard-apply-update <<'APPLY'

@@ -1,5 +1,7 @@
 import type { ReactNode } from "react";
+import { api } from "../api";
 import { useFetch } from "../hooks";
+import { canWrite, useAuth } from "../auth";
 import { EmptyRow, PageHeader, TableCard } from "../components/ui";
 import { label, severityLabels } from "../labels";
 import {
@@ -64,8 +66,16 @@ const severityBadge: Record<string, string> = {
 };
 
 export default function Dashboard() {
-  const { data: stats } = useFetch<Stats>("/api/dashboard/stats");
-  const { data: events, loading } = useFetch<EventRow[]>("/api/events?unresolved=1");
+  const { user } = useAuth();
+  const writable = canWrite(user);
+  const { data: stats, reload: reloadStats } = useFetch<Stats>("/api/dashboard/stats");
+  const { data: events, loading, reload: reloadEvents } = useFetch<EventRow[]>("/api/events?unresolved=1");
+
+  async function deleteEvent(id: number) {
+    if (!confirm("要刪除這筆警示嗎？此操作無法復原。")) return;
+    await api.del(`/api/events/${id}`);
+    await Promise.all([reloadEvents(), reloadStats()]);
+  }
 
   return (
     <div className="space-y-6">
@@ -125,6 +135,7 @@ export default function Dashboard() {
                 <th className="th">嚴重程度</th>
                 <th className="th">裝置</th>
                 <th className="th">訊息</th>
+                {writable && <th className="th" />}
               </tr>
             </thead>
             <tbody>
@@ -139,10 +150,17 @@ export default function Dashboard() {
                   </td>
                   <td className="td font-mono text-xs">{e.device_id?.slice(0, 8) ?? "—"}</td>
                   <td className="td">{e.message}</td>
+                  {writable && (
+                    <td className="td text-right">
+                      <button className="text-xs font-medium text-red-600 hover:underline" onClick={() => void deleteEvent(e.id)}>
+                        刪除
+                      </button>
+                    </td>
+                  )}
                 </tr>
               ))}
-              {loading && <EmptyRow colSpan={5}>載入中…</EmptyRow>}
-              {events && events.length === 0 && <EmptyRow colSpan={5}>沒有未處理的警示 🎉</EmptyRow>}
+              {loading && <EmptyRow colSpan={writable ? 6 : 5}>載入中…</EmptyRow>}
+              {events && events.length === 0 && <EmptyRow colSpan={writable ? 6 : 5}>沒有未處理的警示 🎉</EmptyRow>}
             </tbody>
           </table>
         </TableCard>

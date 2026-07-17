@@ -36,9 +36,40 @@ export default function Events() {
 
   const [kind, setKind] = useState<"teams" | "webhook">("teams");
   const [url, setUrl] = useState("");
+  const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
 
   async function resolve(id: number) {
     await api.post(`/api/events/${id}/resolve`);
+    reload();
+  }
+  async function deleteEvent(id: number) {
+    if (!confirm("要刪除這筆事件嗎？此操作無法復原。")) return;
+    await api.del(`/api/events/${id}`);
+    setSelectedIds((selected) => {
+      const next = new Set(selected);
+      next.delete(id);
+      return next;
+    });
+    reload();
+  }
+  function toggleEvent(id: number) {
+    setSelectedIds((selected) => {
+      const next = new Set(selected);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+  function selectAllEvents() {
+    const ids = (events ?? []).map((event) => event.id);
+    const allSelected = ids.length > 0 && ids.every((id) => selectedIds.has(id));
+    setSelectedIds(allSelected ? new Set() : new Set(ids));
+  }
+  async function deleteSelectedEvents() {
+    const ids = [...selectedIds];
+    if (!ids.length || !confirm(`要刪除選取的 ${ids.length} 筆事件嗎？此操作無法復原。`)) return;
+    await api.del("/api/events/batch", { ids });
+    setSelectedIds(new Set());
     reload();
   }
   async function addChannel() {
@@ -56,10 +87,23 @@ export default function Events() {
     <div className="space-y-6">
       <PageHeader title="事件與警示" subtitle="裝置健康通知" />
 
+      <div className="flex justify-end gap-2">
+        {writable && (
+          <>
+            <button className="btn-ghost" disabled={!events?.length} onClick={selectAllEvents}>
+              {(events?.length ?? 0) > 0 && events!.every((event) => selectedIds.has(event.id)) ? "取消全選" : "全選"}
+            </button>
+            <button className="btn-danger" disabled={!selectedIds.size} onClick={() => void deleteSelectedEvents()}>
+              刪除選取（{selectedIds.size}）
+            </button>
+          </>
+        )}
+      </div>
       <TableCard>
         <table className="w-full min-w-[680px]">
           <thead>
             <tr>
+              {writable && <th className="th w-10" />}
               <th className="th">時間</th>
               <th className="th">類型</th>
               <th className="th">嚴重程度</th>
@@ -71,6 +115,11 @@ export default function Events() {
           <tbody>
             {(events ?? []).map((e) => (
               <tr key={e.id} className={e.resolved_at ? "opacity-50" : ""}>
+                {writable && (
+                  <td className="td">
+                    <input type="checkbox" checked={selectedIds.has(e.id)} onChange={() => toggleEvent(e.id)} aria-label={`選取 ${e.type}`} />
+                  </td>
+                )}
                 <td className="td whitespace-nowrap text-xs text-slate-500">{e.created_at}</td>
                 <td className="td">{e.type}</td>
                 <td className="td">
@@ -81,19 +130,17 @@ export default function Events() {
                 <td className="td font-mono text-xs">{e.device_id?.slice(0, 8) ?? "—"}</td>
                 <td className="td">{e.message}</td>
                 <td className="td text-right">
-                  {!e.resolved_at && writable && (
-                    <button
-                      className="text-xs font-medium text-brand-600 hover:underline"
-                      onClick={() => resolve(e.id)}
-                    >
-                      標記已解決
-                    </button>
+                  {writable && (
+                    <div className="flex justify-end gap-3">
+                      {!e.resolved_at && <button className="text-xs font-medium text-brand-600 hover:underline" onClick={() => void resolve(e.id)}>標記已解決</button>}
+                      <button className="text-xs font-medium text-red-600 hover:underline" onClick={() => void deleteEvent(e.id)}>刪除</button>
+                    </div>
                   )}
-                  {e.resolved_at && <span className="text-xs text-slate-400">已解決</span>}
+                  {!writable && e.resolved_at && <span className="text-xs text-slate-400">已解決</span>}
                 </td>
               </tr>
             ))}
-            {events && events.length === 0 && <EmptyRow colSpan={6}>尚無事件紀錄。</EmptyRow>}
+            {events && events.length === 0 && <EmptyRow colSpan={writable ? 7 : 6}>尚無事件紀錄。</EmptyRow>}
           </tbody>
         </table>
       </TableCard>

@@ -15,14 +15,46 @@
     color: #444; font: 500 24px system-ui, sans-serif;
     display: flex; align-items: center; justify-content: center; height: 100%;
   }
+  #notification {
+    position: fixed; left: 24px; bottom: 24px; z-index: 20; max-width: min(560px, calc(100vw - 48px));
+    padding: 13px 17px; border-radius: 10px; color: #fff; background: rgba(15, 23, 42, .94);
+    box-shadow: 0 8px 28px rgba(0, 0, 0, .45);
+    font: 600 16px/1.35 "Noto Sans CJK TC", "Noto Sans CJK SC", system-ui, sans-serif;
+    opacity: 0; transform: translateY(12px); pointer-events: none; transition: opacity .2s, transform .2s;
+  }
+  #notification.show { opacity: 1; transform: translateY(0); }
+  #notification.success { background: rgba(5, 100, 64, .95); }
+  #notification.warning { background: rgba(146, 64, 14, .96); }
+  #notification.error { background: rgba(153, 27, 27, .96); }
 </style>
 </head>
 <body>
 <div id="stage"><div id="idle">ScreenBoard</div></div>
+<div id="notification" role="status" aria-live="polite"></div>
 <script>
 (() => {
   const stage = document.getElementById('stage');
-  let items = [], idx = 0, loop = true, revision = null, timer = null;
+  const notification = document.getElementById('notification');
+  let items = [], idx = 0, loop = true, revision = null, timer = null, renderSerial = 0;
+  let notificationId = 0, notificationTimer = null;
+
+  function showNotification(notice) {
+    if (!notice || !notice.id || notice.id === notificationId || !notice.message) return;
+    notificationId = notice.id;
+    if (notificationTimer) { clearTimeout(notificationTimer); notificationTimer = null; }
+    notification.textContent = notice.message;
+    notification.className = `show ${notice.level || 'info'}`;
+    if (!notice.persistent) {
+      notificationTimer = setTimeout(() => { notification.className = ''; }, 5000);
+    }
+  }
+
+  async function pollNotification() {
+    try {
+      const r = await fetch('/notification.json', { cache: 'no-store' });
+      showNotification(await r.json());
+    } catch (_) { /* local player may briefly restart */ }
+  }
 
   function report(ev) {
     try { navigator.sendBeacon('/event', JSON.stringify(ev)); } catch (_) {}
@@ -33,7 +65,8 @@
 
   function clearStage() {
     if (timer) { clearTimeout(timer); timer = null; }
-    stage.innerHTML = '';
+    renderSerial++;
+    stage.replaceChildren();
   }
 
   function advance() {
@@ -46,23 +79,36 @@
   }
 
   function show() {
-    clearStage();
+    if (timer) { clearTimeout(timer); timer = null; }
     const item = items[idx];
     if (!item) return;
     const dur = (item.duration_sec || 10) * 1000;
     let el;
+    const previous = stage.firstElementChild;
+    const serial = ++renderSerial;
+    let revealed = false;
+    function reveal() {
+      if (revealed || serial !== renderSerial) return;
+      revealed = true;
+      el.style.visibility = 'visible';
+      if (previous && previous !== el) {
+        previous.remove();
+      }
+    }
 
     if (item.type === 'image') {
       el = document.createElement('img');
       el.src = item.source;
-      el.onerror = () => report({ type: 'playback', ok: false, item_id: item.id, browser_error: 'image load failed' });
+      el.onload = reveal;
+      el.onerror = () => { report({ type: 'playback', ok: false, item_id: item.id, browser_error: 'image load failed' }); reveal(); };
       timer = setTimeout(advance, dur);
     } else if (item.type === 'video') {
       el = document.createElement('video');
       el.src = item.source;
       el.autoplay = true; el.muted = true; el.playsInline = true; el.controls = false;
+      el.oncanplay = reveal;
       el.onended = advance;
-      el.onerror = () => { report({ type: 'playback', ok: false, item_id: item.id, browser_error: 'video load failed' }); advance(); };
+      el.onerror = () => { report({ type: 'playback', ok: false, item_id: item.id, browser_error: 'video load failed' }); reveal(); advance(); };
       // Fallback in case 'ended' never fires.
       timer = setTimeout(advance, dur + 2000);
     } else {
@@ -70,9 +116,12 @@
       el = document.createElement('iframe');
       el.src = item.source;
       el.setAttribute('scrolling', 'no');
-      el.onerror = () => report({ type: 'playback', ok: false, item_id: item.id, browser_error: 'frame load failed' });
+      el.onload = reveal;
+      el.onerror = () => { report({ type: 'playback', ok: false, item_id: item.id, browser_error: 'frame load failed' }); reveal(); };
       timer = setTimeout(advance, dur);
     }
+    // Keep the current item visible until the new one is actually ready.
+    el.style.visibility = 'hidden';
     stage.appendChild(el);
     report({ type: 'playback', ok: true, item_id: item.id });
   }
@@ -94,6 +143,10 @@
 
   poll();
   setInterval(poll, 5000);
+  pollNotification();
+  // Operational commands such as reboot can end the Agent quickly. Poll fast
+  // enough that the user sees the on-screen warning before that happens.
+  setInterval(pollNotification, 250);
 })();
 </script>
 </body>

@@ -24,7 +24,6 @@ type Config struct {
 	RefreshToken    string  `json:"refresh_token,omitempty"`
 	WSURL           string  `json:"ws_url,omitempty"`
 	Channel         string  `json:"channel,omitempty"`
-	OTAPublicKey    string  `json:"ota_public_key,omitempty"` // base64 ed25519 public key
 	PlayerPort      int     `json:"player_port,omitempty"`
 	HealthInterval  int     `json:"health_interval_sec,omitempty"`
 	PlaylistPoll    int     `json:"playlist_poll_sec,omitempty"`

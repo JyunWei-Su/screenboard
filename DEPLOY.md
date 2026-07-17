@@ -70,6 +70,9 @@ device gets `ssh-<device-uuid>.<zone>`, a separately managed Tunnel, DNS record,
 and Cloudflare Access browser-SSH app. This first-level hostname is covered by
 Cloudflare Universal SSL.
 The Access policy allows only the email addresses above.
+ScreenBoard automatically creates each app as a browser-SSH Access application,
+creates its short-lived certificate CA, and installs the CA on the device. The
+email prefix is also used as the unprivileged Linux login name.
 
 Create a least-privilege Cloudflare API token and store it as the `CF_API_TOKEN`
 Worker secret. It must be able to:

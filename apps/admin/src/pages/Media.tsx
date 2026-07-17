@@ -2,6 +2,8 @@ import { useRef, useState } from "react";
 import { api, contentUrl } from "../api";
 import { useFetch } from "../hooks";
 import { canWrite, useAuth } from "../auth";
+import { PageHeader } from "../components/ui";
+import { label, mediaTypeLabels } from "../labels";
 
 interface MediaRow {
   id: number;
@@ -43,24 +45,23 @@ export default function Media() {
     }
   }
   async function remove(id: number) {
-    if (!confirm("Delete media?")) return;
+    if (!confirm("要刪除媒體嗎?")) return;
     await api.del(`/api/media/${id}`);
     reload();
   }
   async function editTags(m: MediaRow) {
-    const next = prompt("Comma-separated tags", m.tags ?? "");
+    const next = prompt("以逗號分隔的標籤", m.tags ?? "");
     if (next == null) return;
     await api.put(`/api/media/${m.id}/tags`, next.split(",").map((s) => s.trim()).filter(Boolean));
     reload();
   }
 
   return (
-    <div className="space-y-4">
-      <div className="flex items-center justify-between">
-        <h1 className="text-xl font-semibold">Media library</h1>
+    <div className="space-y-5">
+      <PageHeader title="媒體庫" subtitle="供播放清單使用的圖片、影片與文件">
         {writable && (
           <label className="btn-primary cursor-pointer">
-            {busy ? "Uploading…" : "Upload"}
+            {busy ? "上傳中…" : "上傳"}
             <input
               ref={fileRef}
               type="file"
@@ -70,34 +71,53 @@ export default function Media() {
             />
           </label>
         )}
-      </div>
+      </PageHeader>
 
-      <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4">
+      <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5">
         {(data ?? []).map((m) => (
-          <div key={m.id} className="card space-y-2">
-            <div className="flex aspect-video items-center justify-center overflow-hidden rounded bg-slate-100">
+          <div key={m.id} className="card group space-y-2 p-3 transition-shadow hover:shadow-md">
+            <div className="flex aspect-video items-center justify-center overflow-hidden rounded-lg bg-slate-100 dark:bg-dark-raised">
               {m.type === "image" ? (
-                <img src={contentUrl(`/api/content/media/${m.id}`)} className="h-full w-full object-cover" alt={m.filename} />
+                <img
+                  src={contentUrl(`/api/content/media/${m.id}`)}
+                  className="h-full w-full object-cover transition-transform group-hover:scale-105"
+                  alt={m.filename}
+                  loading="lazy"
+                />
               ) : (
-                <span className="text-3xl">{m.type === "video" ? "🎬" : m.type === "pdf" ? "📄" : "🌐"}</span>
+                <span className="text-4xl">
+                  {m.type === "video" ? "🎬" : m.type === "pdf" ? "📄" : "🌐"}
+                </span>
               )}
             </div>
-            <div className="truncate text-sm font-medium" title={m.filename}>{m.filename}</div>
+            <div className="truncate text-sm font-medium" title={m.filename}>
+              {m.filename}
+            </div>
             <div className="flex items-center justify-between text-xs text-slate-400">
-              <span>{m.type} · v{m.version ?? 1}</span>
+              <span>
+                {label(mediaTypeLabels, m.type)} · v{m.version ?? 1}
+              </span>
               <span>{m.size ? `${Math.round(m.size / 1024)} KB` : ""}</span>
             </div>
-            {m.tags && <div className="text-xs text-brand-600">#{m.tags.split(",").join(" #")}</div>}
+            {m.tags && (
+              <div className="truncate text-xs text-brand-600">#{m.tags.split(",").join(" #")}</div>
+            )}
             {writable && (
-              <div className="flex gap-3 text-xs">
-                <button className="text-slate-600 hover:underline" onClick={() => editTags(m)}>Tags</button>
-                <button className="text-red-600 hover:underline" onClick={() => remove(m.id)}>Delete</button>
+              <div className="flex gap-3 border-t border-slate-100 pt-2 text-xs dark:border-dark-border">
+                <button className="font-medium text-slate-600 hover:underline" onClick={() => editTags(m)}>
+                  標籤
+                </button>
+                <button className="font-medium text-red-600 hover:underline" onClick={() => remove(m.id)}>
+                  刪除
+                </button>
               </div>
             )}
           </div>
         ))}
         {data && data.length === 0 && (
-          <div className="col-span-full text-sm text-slate-400">No media uploaded yet.</div>
+          <div className="col-span-full rounded-xl border border-dashed border-slate-300 bg-white p-10 text-center text-sm text-slate-400 dark:border-dark-border dark:bg-dark-surface dark:text-dark-subtle">
+            尚未上傳媒體。
+          </div>
         )}
       </div>
     </div>

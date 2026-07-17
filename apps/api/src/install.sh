@@ -198,6 +198,9 @@ PROF
 cat >"$HOME_DIR/.xinitrc" <<'XINIT'
 #!/bin/sh
 xset s off; xset -dpms; xset s noblank
+# Paint the X root black so the gap between killing and relaunching Chromium
+# (reload / display change / OTA restart) never flashes the default grey/white.
+xsetroot -solid black
 unclutter -idle 0 &
 openbox-session &
 xbindkeys &
@@ -210,11 +213,79 @@ XINIT
 chmod +x "$HOME_DIR/.xinitrc"
 chown "$KIOSK_USER:$KIOSK_USER" "$HOME_DIR/.bash_profile" "$HOME_DIR/.xinitrc" "$HOME_DIR/.xbindkeysrc"
 
-# Permit only the Agent's two power operations. The non-interactive sudo call
-# gives failed remote commands a useful error instead of an auth prompt.
+# OTA self-update helper. The kiosk Agent runs unprivileged and its binary is
+# root-owned in /usr/local/bin, so it cannot replace itself. It stages a
+# checksum/signature-verified binary and calls this helper (via the sudoers rule
+# below) to swap it in atomically as root. The destination is hardcoded; only
+# the staged source path comes from the caller.
+cat >/usr/local/bin/screenboard-apply-update <<'APPLY'
+#!/bin/sh
+set -eu
+DEST=/usr/local/bin/screenboard-agent
+SRC="${1:?usage: screenboard-apply-update <staged-binary>}"
+[ -f "$SRC" ] || { echo "source not found: $SRC" >&2; exit 1; }
+[ -s "$SRC" ] || { echo "source is empty: $SRC" >&2; exit 1; }
+# Stage beside the destination so the final swap is atomic and never crosses
+# filesystems, then replace the running binary.
+TMP="$(mktemp "$(dirname "$DEST")/.screenboard-agent.XXXXXX")"
+trap 'rm -f "$TMP"' EXIT
+cat "$SRC" >"$TMP"
+chown root:root "$TMP"
+chmod 0755 "$TMP"
+mv -f "$TMP" "$DEST"
+trap - EXIT
+APPLY
+chown root:root /usr/local/bin/screenboard-apply-update
+chmod 755 /usr/local/bin/screenboard-apply-update
+
+# Remote tunnel-repair helper. Re-fetches this device's Cloudflare Tunnel token
+# and reinstalls the cloudflared connector, so SSH remote access can be restored
+# entirely over the agent's command channel (no working SSH required).
+cat >/usr/local/bin/screenboard-repair-tunnel <<'REPAIR'
+#!/bin/sh
+set -eu
+CONFIG=/etc/screenboard/agent.json
+SERVER="$(sed -n 's/.*"server_url"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$CONFIG" | head -n1)"
+TOKEN="$(sed -n 's/.*"access_token"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$CONFIG" | head -n1)"
+[ -n "$SERVER" ] || { echo "server_url missing from config" >&2; exit 1; }
+[ -n "$TOKEN" ] || { echo "access_token missing from config" >&2; exit 1; }
+SERVER="${SERVER%/}"
+RESP="$(curl -fsSL -H "Authorization: Bearer $TOKEN" "$SERVER/api/agent/remote-access" || true)"
+TUNNEL_TOKEN="$(printf '%s' "$RESP" | sed -n 's/.*"tunnel_token"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')"
+[ -n "$TUNNEL_TOKEN" ] || { echo "no tunnel token — provision SSH for this device first: $RESP" >&2; exit 1; }
+install -d -m 700 /etc/cloudflared
+if systemctl cat cloudflared.service >/dev/null 2>&1; then
+  systemctl stop cloudflared || true
+  cloudflared service uninstall || true
+fi
+cloudflared service install "$TUNNEL_TOKEN"
+systemctl enable --now cloudflared
+echo "cloudflared reinstalled and started"
+REPAIR
+chown root:root /usr/local/bin/screenboard-repair-tunnel
+chmod 755 /usr/local/bin/screenboard-repair-tunnel
+
+# Remote full-reinstall helper. Re-runs this installer as root (repairs binary,
+# helpers, sudoers, cloudflared, kiosk session) and reboots. The persisted
+# config means no enrollment token is needed.
+cat >/usr/local/bin/screenboard-reinstall <<'REINSTALL'
+#!/bin/sh
+set -eu
+CONFIG=/etc/screenboard/agent.json
+SERVER="$(sed -n 's/.*"server_url"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$CONFIG" | head -n1)"
+[ -n "$SERVER" ] || { echo "server_url missing from config" >&2; exit 1; }
+SERVER="${SERVER%/}"
+curl -fsSL "$SERVER/install.sh" | bash -s -- --server "$SERVER"
+REINSTALL
+chown root:root /usr/local/bin/screenboard-reinstall
+chmod 755 /usr/local/bin/screenboard-reinstall
+
+# Permit only the Agent's power operations and the self-management helpers. The
+# non-interactive sudo call gives failed remote commands a useful error instead
+# of an auth prompt.
 install -d -m 750 /etc/sudoers.d
 cat >/etc/sudoers.d/screenboard-agent <<SUDOERS
-$KIOSK_USER ALL=(root) NOPASSWD: /usr/bin/systemctl reboot, /usr/bin/systemctl poweroff
+$KIOSK_USER ALL=(root) NOPASSWD: /usr/bin/systemctl reboot, /usr/bin/systemctl poweroff, /usr/local/bin/screenboard-apply-update, /usr/local/bin/screenboard-repair-tunnel, /usr/local/bin/screenboard-reinstall
 SUDOERS
 chmod 440 /etc/sudoers.d/screenboard-agent
 visudo -cf /etc/sudoers.d/screenboard-agent

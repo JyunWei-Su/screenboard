@@ -2,6 +2,8 @@ import { useState } from "react";
 import { api } from "../api";
 import { useFetch } from "../hooks";
 import { useAuth } from "../auth";
+import { EmptyRow, PageHeader, TableCard } from "../components/ui";
+import { label, roleLabels } from "../labels";
 
 interface UserRow {
   id: number;
@@ -17,6 +19,12 @@ interface Provision {
   otpauth_uri: string;
 }
 
+const roleBadge: Record<string, string> = {
+  admin: "bg-brand-100 text-brand-700",
+  operator: "bg-blue-100 text-blue-700",
+  viewer: "bg-slate-100 text-slate-600",
+};
+
 export default function Users() {
   const { user } = useAuth();
   const isAdmin = user?.role === "admin";
@@ -25,7 +33,12 @@ export default function Users() {
   const [role, setRole] = useState("operator");
   const [provision, setProvision] = useState<Provision | null>(null);
 
-  if (!isAdmin) return <div className="text-slate-500">User management requires the admin role.</div>;
+  if (!isAdmin)
+    return (
+      <div className="rounded-xl border border-dashed border-slate-300 bg-white p-10 text-center text-sm text-slate-500 dark:border-dark-border dark:bg-dark-surface dark:text-dark-muted">
+        使用者管理需要管理員權限。
+      </div>
+    );
 
   async function create() {
     if (!name) return;
@@ -35,76 +48,102 @@ export default function Users() {
     reload();
   }
   async function resetTotp(id: number, uname: string) {
-    if (!confirm(`Reset TOTP for ${uname}? Their current authenticator will stop working.`)) return;
+    if (!confirm(`要重設 ${uname} 的 TOTP 嗎?其目前的驗證器將停止運作。`)) return;
     const res = await api.post<Provision>(`/api/users/${id}/reset-totp`);
     setProvision({ ...res, name: uname });
   }
   async function remove(id: number) {
-    if (!confirm("Delete user?")) return;
+    if (!confirm("要刪除使用者嗎?")) return;
     await api.del(`/api/users/${id}`);
     reload();
   }
 
   return (
-    <div className="space-y-4">
-      <h1 className="text-xl font-semibold">Users</h1>
+    <div className="space-y-5">
+      <PageHeader title="使用者" subtitle="管理員、操作員與檢視者帳號" />
 
-      <div className="card flex flex-wrap items-end gap-3">
-        <div className="grow">
-          <label className="mb-1 block text-xs text-slate-500">Name</label>
+      <div className="card grid grid-cols-1 gap-3 sm:grid-cols-2 sm:items-end lg:grid-cols-[1fr_auto_auto]">
+        <div>
+          <label className="label">名稱</label>
           <input className="input" value={name} onChange={(e) => setName(e.target.value)} />
         </div>
         <div>
-          <label className="mb-1 block text-xs text-slate-500">Role</label>
-          <select className="input" value={role} onChange={(e) => setRole(e.target.value)}>
-            <option value="admin">admin</option>
-            <option value="operator">operator</option>
-            <option value="viewer">viewer</option>
+          <label className="label">角色</label>
+          <select className="select" value={role} onChange={(e) => setRole(e.target.value)}>
+            <option value="admin">管理員</option>
+            <option value="operator">操作員</option>
+            <option value="viewer">檢視者</option>
           </select>
         </div>
-        <button className="btn-primary" onClick={create}>Create</button>
+        <button className="btn-primary w-full sm:w-auto" onClick={create}>
+          建立
+        </button>
       </div>
 
       {provision && (
-        <div className="card space-y-2 bg-brand-50">
-          <div className="text-sm font-medium text-brand-700">
-            TOTP for <b>{provision.name}</b> — shown once. Add it to an authenticator app now.
+        <div className="card animate-slide-in space-y-2 border-brand-200 bg-brand-50 dark:border-brand-500/30 dark:bg-brand-500/10">
+          <div className="text-sm font-medium text-brand-700 dark:text-brand-200">
+            <b>{provision.name}</b> 的 TOTP — 僅顯示一次,請立即加入驗證器應用程式。
           </div>
-          <div className="text-xs text-slate-600">
-            Secret: <code className="rounded bg-white px-1">{provision.totp_secret}</code>
+          <div className="text-xs text-slate-600 dark:text-dark-muted">
+            密鑰:{" "}
+            <code className="rounded bg-white px-1.5 py-0.5 dark:bg-dark-raised dark:text-dark-text">
+              {provision.totp_secret}
+            </code>
           </div>
-          <div className="break-all text-xs text-slate-500">{provision.otpauth_uri}</div>
-          <button className="btn-ghost" onClick={() => setProvision(null)}>Dismiss</button>
+          <div className="break-all text-xs text-slate-500 dark:text-dark-subtle">
+            {provision.otpauth_uri}
+          </div>
+          <button className="btn-ghost btn-sm" onClick={() => setProvision(null)}>
+            關閉
+          </button>
         </div>
       )}
 
-      <div className="card p-0">
-        <table className="w-full">
+      <TableCard>
+        <table className="w-full min-w-[560px]">
           <thead>
             <tr>
-              <th className="th">Name</th>
-              <th className="th">Role</th>
-              <th className="th">Last login</th>
-              <th className="th"></th>
+              <th className="th">名稱</th>
+              <th className="th">角色</th>
+              <th className="th">最後登入</th>
+              <th className="th" />
             </tr>
           </thead>
           <tbody>
             {(data ?? []).map((u) => (
               <tr key={u.id}>
                 <td className="td font-medium">{u.name}</td>
-                <td className="td">{u.role}</td>
-                <td className="td text-xs text-slate-500">{u.last_login_at ?? "never"}</td>
-                <td className="td space-x-3 text-right">
-                  <button className="text-xs text-slate-600 hover:underline" onClick={() => resetTotp(u.id, u.name)}>Reset TOTP</button>
+                <td className="td">
+                  <span className={`badge ${roleBadge[u.role] ?? "bg-slate-100 text-slate-600"}`}>
+                    {label(roleLabels, u.role)}
+                  </span>
+                </td>
+                <td className="td whitespace-nowrap text-xs text-slate-500">
+                  {u.last_login_at ?? "從未"}
+                </td>
+                <td className="td space-x-3 whitespace-nowrap text-right">
+                  <button
+                    className="text-xs font-medium text-slate-600 hover:underline"
+                    onClick={() => resetTotp(u.id, u.name)}
+                  >
+                    重設 TOTP
+                  </button>
                   {u.id !== user?.id && (
-                    <button className="text-xs text-red-600 hover:underline" onClick={() => remove(u.id)}>Delete</button>
+                    <button
+                      className="text-xs font-medium text-red-600 hover:underline"
+                      onClick={() => remove(u.id)}
+                    >
+                      刪除
+                    </button>
                   )}
                 </td>
               </tr>
             ))}
+            {data && data.length === 0 && <EmptyRow colSpan={4}>尚無使用者。</EmptyRow>}
           </tbody>
         </table>
-      </div>
+      </TableCard>
     </div>
   );
 }

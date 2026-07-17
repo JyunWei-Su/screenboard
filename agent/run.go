@@ -175,6 +175,17 @@ func (a *Agent) handleCommand(cmd ServerCommand) (bool, string) {
 		}
 	case "apply_display":
 		a.player.ApplyDisplay(displayFromPayload(cmd.Payload, a.cfg.Display))
+	case "repair_tunnel":
+		// Freshen the on-disk access token the helper reads, then reinstall the
+		// cloudflared connector so SSH remote access recovers over this channel.
+		_ = a.client.refresh()
+		if err := RepairTunnel(); err != nil {
+			return false, err.Error()
+		}
+	case "reinstall":
+		if err := Reinstall(); err != nil {
+			return false, err.Error()
+		}
 	default:
 		return false, "unknown command"
 	}

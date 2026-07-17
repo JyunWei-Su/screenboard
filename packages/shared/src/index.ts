@@ -21,7 +21,9 @@ export type CommandType =
   | "restart_player"
   | "take_screenshot"
   | "check_update"
-  | "apply_display"; // push display settings (zoom/rotate/etc.)
+  | "apply_display" // push display settings (zoom/rotate/etc.)
+  | "repair_tunnel" // re-provision cloudflared so SSH remote access recovers
+  | "reinstall"; // re-run the device installer as root, then reboot
 
 export type EventType =
   | "device_offline"

@@ -119,6 +119,8 @@ app.post("/:uuid/commands", requireRole("admin", "operator"), async (c) => {
     "take_screenshot",
     "check_update",
     "apply_display",
+    "repair_tunnel",
+    "reinstall",
   ];
   if (!valid.includes(type)) return c.json({ error: "invalid_command" }, 400);
   const result = await issueCommand(c.env, uuid, type, payload, c.get("user").id);

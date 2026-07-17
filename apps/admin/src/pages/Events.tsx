@@ -2,6 +2,8 @@ import { useState } from "react";
 import { api } from "../api";
 import { useFetch } from "../hooks";
 import { canWrite, useAuth } from "../auth";
+import { EmptyRow, PageHeader, TableCard } from "../components/ui";
+import { label, severityLabels } from "../labels";
 
 interface EventRow {
   id: number;
@@ -19,6 +21,11 @@ interface Channel {
   events: string;
   enabled: number;
 }
+
+const severityBadge: Record<string, string> = {
+  critical: "bg-red-100 text-red-700",
+  warning: "bg-amber-100 text-amber-700",
+};
 
 export default function Events() {
   const { user } = useAuth();
@@ -47,77 +54,104 @@ export default function Events() {
 
   return (
     <div className="space-y-6">
-      <h1 className="text-xl font-semibold">Events & alerts</h1>
+      <PageHeader title="事件與警示" subtitle="裝置健康通知" />
 
-      <div className="card p-0">
-        <table className="w-full">
+      <TableCard>
+        <table className="w-full min-w-[680px]">
           <thead>
             <tr>
-              <th className="th">Time</th>
-              <th className="th">Type</th>
-              <th className="th">Severity</th>
-              <th className="th">Device</th>
-              <th className="th">Message</th>
-              <th className="th"></th>
+              <th className="th">時間</th>
+              <th className="th">類型</th>
+              <th className="th">嚴重程度</th>
+              <th className="th">裝置</th>
+              <th className="th">訊息</th>
+              <th className="th" />
             </tr>
           </thead>
           <tbody>
             {(events ?? []).map((e) => (
               <tr key={e.id} className={e.resolved_at ? "opacity-50" : ""}>
-                <td className="td whitespace-nowrap text-xs">{e.created_at}</td>
+                <td className="td whitespace-nowrap text-xs text-slate-500">{e.created_at}</td>
                 <td className="td">{e.type}</td>
                 <td className="td">
-                  <span className={e.severity === "critical" ? "text-red-600" : e.severity === "warning" ? "text-amber-600" : "text-slate-500"}>
-                    {e.severity}
+                  <span className={`badge ${severityBadge[e.severity] ?? "bg-slate-100 text-slate-600"}`}>
+                    {label(severityLabels, e.severity)}
                   </span>
                 </td>
                 <td className="td font-mono text-xs">{e.device_id?.slice(0, 8) ?? "—"}</td>
                 <td className="td">{e.message}</td>
                 <td className="td text-right">
                   {!e.resolved_at && writable && (
-                    <button className="text-xs text-brand-600 hover:underline" onClick={() => resolve(e.id)}>Resolve</button>
+                    <button
+                      className="text-xs font-medium text-brand-600 hover:underline"
+                      onClick={() => resolve(e.id)}
+                    >
+                      標記已解決
+                    </button>
                   )}
-                  {e.resolved_at && <span className="text-xs text-slate-400">resolved</span>}
+                  {e.resolved_at && <span className="text-xs text-slate-400">已解決</span>}
                 </td>
               </tr>
             ))}
+            {events && events.length === 0 && <EmptyRow colSpan={6}>尚無事件紀錄。</EmptyRow>}
           </tbody>
         </table>
-      </div>
+      </TableCard>
 
       {isAdmin && (
-        <div className="card space-y-3">
-          <h2 className="text-sm font-semibold text-slate-700">Notification channels</h2>
-          <div className="flex flex-wrap items-end gap-3">
-            <div>
-              <label className="mb-1 block text-xs text-slate-500">Type</label>
-              <select className="input" value={kind} onChange={(e) => setKind(e.target.value as "teams" | "webhook")}>
+        <div className="card space-y-4">
+          <h2 className="card-title">通知管道</h2>
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
+            <div className="sm:w-48">
+              <label className="label">類型</label>
+              <select
+                className="select"
+                value={kind}
+                onChange={(e) => setKind(e.target.value as "teams" | "webhook")}
+              >
                 <option value="teams">Microsoft Teams</option>
                 <option value="webhook">Webhook</option>
               </select>
             </div>
             <div className="grow">
-              <label className="mb-1 block text-xs text-slate-500">Incoming webhook URL</label>
-              <input className="input" value={url} onChange={(e) => setUrl(e.target.value)} placeholder="https://…" />
+              <label className="label">傳入 Webhook URL</label>
+              <input
+                className="input"
+                value={url}
+                onChange={(e) => setUrl(e.target.value)}
+                placeholder="https://…"
+              />
             </div>
-            <button className="btn-primary" onClick={addChannel}>Add</button>
+            <button className="btn-primary w-full sm:w-auto" onClick={addChannel}>
+              新增
+            </button>
           </div>
-          <table className="w-full">
-            <tbody>
-              {(channels ?? []).map((c) => (
-                <tr key={c.id}>
-                  <td className="td w-24">{c.kind}</td>
-                  <td className="td truncate font-mono text-xs">{c.url}</td>
-                  <td className="td text-right">
-                    <button className="text-xs text-red-600 hover:underline" onClick={() => delChannel(c.id)}>Delete</button>
-                  </td>
-                </tr>
-              ))}
-              {channels && channels.length === 0 && (
-                <tr><td className="td text-slate-400">No channels — offline/OTA/playlist alerts won’t be pushed.</td></tr>
-              )}
-            </tbody>
-          </table>
+
+          <TableCard>
+            <table className="w-full min-w-[480px]">
+              <tbody>
+                {(channels ?? []).map((c) => (
+                  <tr key={c.id}>
+                    <td className="td w-28 capitalize">{c.kind}</td>
+                    <td className="td truncate font-mono text-xs">{c.url}</td>
+                    <td className="td text-right">
+                      <button
+                        className="text-xs font-medium text-red-600 hover:underline"
+                        onClick={() => delChannel(c.id)}
+                      >
+                        刪除
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+                {channels && channels.length === 0 && (
+                  <EmptyRow colSpan={3}>
+                    尚無管道 — 離線／OTA／播放清單警示將不會推送。
+                  </EmptyRow>
+                )}
+              </tbody>
+            </table>
+          </TableCard>
         </div>
       )}
     </div>

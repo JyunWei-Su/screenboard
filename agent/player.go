@@ -162,6 +162,10 @@ func (p *Player) LaunchChromium() {
 		"--disable-translate",
 		"--incognito",
 		"--user-data-dir=/tmp/screenboard-chromium",
+		// Paint the pre-first-paint surface black instead of Chromium's default
+		// white, so a cold (re)launch does not flash white before player.html's
+		// black background renders. Value is ARGB hex (opaque black).
+		"--default-background-color=FF000000",
 		fmt.Sprintf("--force-device-scale-factor=%.2f", p.cfg.Display.Zoom),
 	}
 	if p.cfg.Display.Kiosk {

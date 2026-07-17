@@ -1,0 +1,25 @@
+{
+  "name": "screenboard",
+  "version": "0.1.0",
+  "private": true,
+  "description": "ScreenBoard — centrally managed Linux digital-signage platform on Cloudflare",
+  "workspaces": [
+    "packages/*",
+    "apps/api",
+    "apps/admin"
+  ],
+  "scripts": {
+    "dev:api": "npm --workspace apps/api run dev",
+    "dev:admin": "npm --workspace apps/admin run dev",
+    "deploy:api": "npm --workspace apps/api run deploy",
+    "build:admin": "npm --workspace apps/admin run build",
+    "migrate:local": "npm --workspace apps/api run migrate:local",
+    "migrate:remote": "npm --workspace apps/api run migrate:remote"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "devDependencies": {
+    "wrangler": "^4.111.0"
+  }
+}

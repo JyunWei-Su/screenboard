@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no" />
+<title>ScreenBoard Player (preview)</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #000; overflow: hidden; }
+  #stage { position: fixed; inset: 0; background: #000; }
+  #stage > * { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; object-fit: contain; background: #000; }
+  #msg { color:#666; font: 500 20px system-ui, sans-serif; display:flex; align-items:center; justify-content:center; height:100%; }
+</style>
+</head>
+<body>
+<div id="stage"><div id="msg">Loading…</div></div>
+<script>
+/*
+ * Standalone / preview player.
+ * Usage: index.html?api=<API_BASE>&playlist=<ID>&token=<ADMIN_OR_DEVICE_TOKEN>
+ * It fetches the fully-resolved playlist and rotates the items. This mirrors the
+ * agent's embedded player; on real devices the Go agent serves its own copy and
+ * caches media locally. This page is handy for previewing a playlist in a browser.
+ */
+(() => {
+  const q = new URLSearchParams(location.search);
+  const api = (q.get('api') || '').replace(/\/$/, '');
+  const playlist = q.get('playlist');
+  const token = q.get('token') || localStorage.getItem('sb_token') || '';
+  const stage = document.getElementById('stage');
+  let items = [], idx = 0, loop = true, revision = null, timer = null;
+
+  function withToken(url) {
+    if (!url.includes('/api/content/')) return url;
+    return url + (url.includes('?') ? '&' : '?') + 'token=' + token;
+  }
+  function clearStage() { if (timer) { clearTimeout(timer); timer = null; } stage.innerHTML = ''; }
+  function advance() {
+    idx++;
+    if (idx >= items.length) { if (!loop) return clearStage(); idx = 0; }
+    show();
+  }
+  function show() {
+    clearStage();
+    const it = items[idx];
+    if (!it) return;
+    const dur = (it.duration_sec || 10) * 1000;
+    let el;
+    const src = withToken(it.source);
+    if (it.type === 'image') {
+      el = document.createElement('img'); el.src = src; timer = setTimeout(advance, dur);
+    } else if (it.type === 'video') {
+      el = document.createElement('video'); el.src = src; el.autoplay = true; el.muted = true;
+      el.playsInline = true; el.onended = advance; timer = setTimeout(advance, dur + 2000);
+    } else {
+      el = document.createElement('iframe'); el.src = src; timer = setTimeout(advance, dur);
+    }
+    stage.appendChild(el);
+  }
+  async function load() {
+    if (!api || !playlist) { stage.innerHTML = '<div id="msg">Pass ?api=&playlist=&token=</div>'; return; }
+    try {
+      const r = await fetch(`${api}/api/playlists/${playlist}/resolved`, {
+        headers: token ? { Authorization: 'Bearer ' + token } : {},
+      });
+      const pl = await r.json();
+      if (pl.revision !== revision) {
+        revision = pl.revision; items = pl.items || []; loop = pl.loop !== false; idx = 0;
+        items.length ? show() : (stage.innerHTML = '<div id="msg">Empty playlist</div>');
+      }
+    } catch (e) {
+      stage.innerHTML = '<div id="msg">Failed to load playlist</div>';
+    }
+  }
+  load();
+  setInterval(load, 15000);
+})();
+</script>
+</body>
+</html>

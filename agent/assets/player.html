@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no" />
+<title>ScreenBoard Player</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #000; overflow: hidden; }
+  #stage { position: fixed; inset: 0; background: #000; }
+  #stage > * {
+    position: absolute; inset: 0; width: 100%; height: 100%;
+    border: 0; object-fit: contain; background: #000;
+  }
+  #idle {
+    color: #444; font: 500 24px system-ui, sans-serif;
+    display: flex; align-items: center; justify-content: center; height: 100%;
+  }
+</style>
+</head>
+<body>
+<div id="stage"><div id="idle">ScreenBoard</div></div>
+<script>
+(() => {
+  const stage = document.getElementById('stage');
+  let items = [], idx = 0, loop = true, revision = null, timer = null;
+
+  function report(ev) {
+    try { navigator.sendBeacon('/event', JSON.stringify(ev)); } catch (_) {}
+  }
+  window.addEventListener('error', (e) => {
+    report({ type: 'playback', ok: false, browser_error: String(e.message || 'error') });
+  });
+
+  function clearStage() {
+    if (timer) { clearTimeout(timer); timer = null; }
+    stage.innerHTML = '';
+  }
+
+  function advance() {
+    idx++;
+    if (idx >= items.length) {
+      if (!loop) { clearStage(); return; }
+      idx = 0;
+    }
+    show();
+  }
+
+  function show() {
+    clearStage();
+    const item = items[idx];
+    if (!item) return;
+    const dur = (item.duration_sec || 10) * 1000;
+    let el;
+
+    if (item.type === 'image') {
+      el = document.createElement('img');
+      el.src = item.source;
+      el.onerror = () => report({ type: 'playback', ok: false, item_id: item.id, browser_error: 'image load failed' });
+      timer = setTimeout(advance, dur);
+    } else if (item.type === 'video') {
+      el = document.createElement('video');
+      el.src = item.source;
+      el.autoplay = true; el.muted = true; el.playsInline = true; el.controls = false;
+      el.onended = advance;
+      el.onerror = () => { report({ type: 'playback', ok: false, item_id: item.id, browser_error: 'video load failed' }); advance(); };
+      // Fallback in case 'ended' never fires.
+      timer = setTimeout(advance, dur + 2000);
+    } else {
+      // url / html / pdf → iframe
+      el = document.createElement('iframe');
+      el.src = item.source;
+      el.setAttribute('scrolling', 'no');
+      el.onerror = () => report({ type: 'playback', ok: false, item_id: item.id, browser_error: 'frame load failed' });
+      timer = setTimeout(advance, dur);
+    }
+    stage.appendChild(el);
+    report({ type: 'playback', ok: true, item_id: item.id });
+  }
+
+  async function poll() {
+    try {
+      const r = await fetch('/playlist.json', { cache: 'no-store' });
+      const pl = await r.json();
+      if (pl.revision !== revision) {
+        revision = pl.revision;
+        items = pl.items || [];
+        loop = pl.loop !== false;
+        idx = 0;
+        if (items.length) show();
+        else { clearStage(); stage.innerHTML = '<div id="idle">ScreenBoard</div>'; }
+      }
+    } catch (_) { /* keep showing current content on transient errors */ }
+  }
+
+  poll();
+  setInterval(poll, 5000);
+})();
+</script>
+</body>
+</html>

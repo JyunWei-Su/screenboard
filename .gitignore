@@ -1,0 +1,19 @@
+node_modules/
+dist/
+build/
+.wrangler/
+.dev.vars
+*.log
+.DS_Store
+.env
+.env.*
+apps/api/.deploy.wrangler.*.jsonc
+coverage/
+
+# Go agent
+agent/screenboard-agent
+agent/*.exe
+/agent/dist/
+
+# Local state
+apps/api/.wrangler/

@@ -1,0 +1,67 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "screenboard-api",
+  "main": "src/index.ts",
+  "compatibility_date": "2025-01-01",
+  "compatibility_flags": ["nodejs_compat"],
+  "observability": {
+    "enabled": true
+  },
+  "rules": [
+    { "type": "Text", "globs": ["**/*.sh"], "fallthrough": true }
+  ],
+  "vars": {
+    // Non-secret config. Secrets (JWT_SECRET, OTA_PUBLIC_KEY, etc.) via `wrangler secret put`.
+    "HEALTH_RETENTION_DAYS": "90",
+    "OFFLINE_TIMEOUT_SECONDS": "90",
+    "PUBLIC_API_URL": "https://screenboard-api.example.workers.dev"
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "screenboard",
+      "database_id": "REPLACE_WITH_D1_DATABASE_ID",
+      "migrations_dir": "migrations"
+    }
+  ],
+  "r2_buckets": [
+    {
+      "binding": "BUCKET",
+      "bucket_name": "screenboard"
+    }
+  ],
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "DEVICE_CONN",
+        "class_name": "DeviceConnection"
+      }
+    ]
+  },
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": ["DeviceConnection"]
+    }
+  ],
+  "queues": {
+    "producers": [
+      {
+        "binding": "EVENTS_QUEUE",
+        "queue": "screenboard-events"
+      }
+    ],
+    "consumers": [
+      {
+        "queue": "screenboard-events",
+        "max_batch_size": 10,
+        "max_batch_timeout": 5,
+        "max_retries": 5
+      }
+    ]
+  },
+  "triggers": {
+    // Every 5 min: sweep offline devices + threshold alerts. Daily 03:00: prune old health rows.
+    "crons": ["*/5 * * * *", "0 3 * * *"]
+  }
+}

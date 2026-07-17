@@ -1,0 +1,19 @@
+[Unit]
+Description=ScreenBoard Device Agent
+After=network-online.target graphical.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# Runs as a user with access to the X display (:0). Adjust User/Environment to your setup.
+User=screenboard
+Environment=DISPLAY=:0
+Environment=XAUTHORITY=/home/screenboard/.Xauthority
+ExecStart=/usr/local/bin/screenboard-agent --config /etc/screenboard/agent.json
+Restart=always
+RestartSec=3
+# Allow the OTA self-replace + reboot/poweroff commands.
+AmbientCapabilities=CAP_SYS_BOOT
+
+[Install]
+WantedBy=graphical.target

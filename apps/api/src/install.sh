@@ -20,7 +20,8 @@ while [ $# -gt 0 ]; do
     --token)   TOKEN="$2"; shift 2;;
     --user)    KIOSK_USER="$2"; shift 2;;
     --channel) CHANNEL="$2"; shift 2;;
-    -*) echo "unknown flag: $1" >&2; exit 1;;
+    # The enrollment token is positional and base64url, so it may begin with '-'.
+    # Accept the first such argument as the token instead of rejecting it.
     *)  if [ -z "$TOKEN" ]; then TOKEN="$1"; shift; else echo "unexpected arg: $1" >&2; exit 1; fi;;
   esac
 done

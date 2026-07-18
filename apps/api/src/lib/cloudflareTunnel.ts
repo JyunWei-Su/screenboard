@@ -77,7 +77,7 @@ export async function allowedSshUsers(env: Env): Promise<string[]> {
     .filter((name) => /^[a-z_][a-z0-9_-]{0,31}$/.test(name)))];
 }
 
-export async function provisionRemoteAccess(env: Env, device: { uuid: string; name: string }): Promise<{ ok: boolean; error?: string }> {
+export async function provisionRemoteAccess(env: Env, device: { uuid: string }): Promise<{ ok: boolean; error?: string }> {
   if (!configuredRemoteAccess(env)) return { ok: false, error: "remote_access_not_configured" };
   const emails = await getAllowedAccessEmails(env);
   const accessConfigVersion = await getSshAccessConfigVersion(env);
@@ -113,7 +113,10 @@ export async function provisionRemoteAccess(env: Env, device: { uuid: string; na
     app = await cf<AccessAppResult>(env, `/accounts/${env.CF_ACCOUNT_ID}/access/apps`, {
       method: "POST",
       body: JSON.stringify({
-        name: `ScreenBoard SSH: ${device.name}`,
+        // Identify the app by the stable device UUID (matches the ssh-<uuid>
+        // destination). The device's display name can change, so keep it out of
+        // the Cloudflare label to avoid drift.
+        name: `ScreenBoard SSH: ${device.uuid}`,
         domain: hostname,
         // BrowserSSHApplication: enables Cloudflare's browser-rendered terminal.
         type: "ssh",
@@ -157,6 +160,75 @@ export async function getTunnelStatus(env: Env, tunnelId: string): Promise<strin
   if (!configuredRemoteAccess(env)) return null;
   const tunnel = await cf<TunnelResult>(env, `/accounts/${env.CF_ACCOUNT_ID}/cfd_tunnel/${tunnelId}`);
   return tunnel.status || "inactive";
+}
+
+interface TunnelListItem { id: string; name?: string; status?: string; created_at?: string; deleted_at?: string | null }
+interface PagedEnvelope<T> extends CloudflareEnvelope<T> { result_info?: { page: number; total_pages: number } }
+
+// cfList pages through a Cloudflare list endpoint that reports result_info. The
+// shared cf() helper drops result_info, so listing needs its own reader.
+async function cfList<T>(env: Env, path: string): Promise<T[]> {
+  const items: T[] = [];
+  for (let page = 1; page <= 50; page++) {
+    const sep = path.includes("?") ? "&" : "?";
+    const res = await fetch(`https://api.cloudflare.com/client/v4${path}${sep}per_page=100&page=${page}`, {
+      headers: { Authorization: `Bearer ${env.CF_API_TOKEN}`, "Content-Type": "application/json" },
+    });
+    const body = await res.json<PagedEnvelope<T[]>>();
+    if (!res.ok || !body.success) {
+      throw new Error(body.errors?.map((e) => e.message).filter(Boolean).join(", ") || `Cloudflare API ${res.status}`);
+    }
+    const batch = body.result ?? [];
+    items.push(...batch);
+    const info = body.result_info;
+    if (batch.length === 0 || !info || info.page >= info.total_pages) break;
+  }
+  return items;
+}
+
+export interface OrphanTunnel { id: string; name: string; status: string; created_at: string | null }
+
+// A ScreenBoard-managed Tunnel is "orphaned" when no device row still references
+// it. These are the leftovers of reprovisioning (delete of the old Tunnel is
+// best-effort and fails while its connector is still live), safe to remove.
+export async function listOrphanTunnels(env: Env): Promise<{ orphans: OrphanTunnel[]; inUse: number }> {
+  if (!configuredRemoteAccess(env)) return { orphans: [], inUse: 0 };
+  const tunnels = await cfList<TunnelListItem>(env, `/accounts/${env.CF_ACCOUNT_ID}/cfd_tunnel?is_deleted=false`);
+  const managed = tunnels.filter((t): t is TunnelListItem & { name: string } =>
+    typeof t.name === "string" && t.name.startsWith("screenboard-"));
+  const rows = await env.DB.prepare("SELECT tunnel_id FROM device_remote_access").all<{ tunnel_id: string }>();
+  const inUseIds = new Set((rows.results ?? []).map((r) => r.tunnel_id));
+  const orphans = managed
+    .filter((t) => !inUseIds.has(t.id))
+    .map((t) => ({ id: t.id, name: t.name, status: t.status || "inactive", created_at: t.created_at ?? null }));
+  return { orphans, inUse: managed.length - orphans.length };
+}
+
+// Deletes only Tunnels confirmed orphaned at call time, so an in-use id passed by
+// a stale client can never remove a live device's Tunnel.
+export async function deleteOrphanTunnels(
+  env: Env,
+  ids: string[],
+): Promise<{ deleted: string[]; failed: Array<{ id: string; error: string }> }> {
+  const deleted: string[] = [];
+  const failed: Array<{ id: string; error: string }> = [];
+  if (!configuredRemoteAccess(env)) return { deleted, failed };
+  const { orphans } = await listOrphanTunnels(env);
+  const allowed = new Set(orphans.map((t) => t.id));
+  for (const id of ids) {
+    if (!allowed.has(id)) { failed.push({ id, error: "not_an_orphan" }); continue; }
+    try {
+      // Clear any stale connection records first so Cloudflare will delete a
+      // Tunnel whose connector has gone away but is still marked connected.
+      await cf(env, `/accounts/${env.CF_ACCOUNT_ID}/cfd_tunnel/${id}/connections`, { method: "DELETE" })
+        .catch(() => {});
+      await cf(env, `/accounts/${env.CF_ACCOUNT_ID}/cfd_tunnel/${id}`, { method: "DELETE" });
+      deleted.push(id);
+    } catch (error) {
+      failed.push({ id, error: error instanceof Error ? error.message : String(error) });
+    }
+  }
+  return { deleted, failed };
 }
 
 export async function createTunnelToken(env: Env, tunnelId: string): Promise<string | null> {

@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import type { Env, Variables } from "../types";
 import { requireAuth, requireRole } from "../auth";
-import { configuredRemoteAccess, getAllowedAccessEmails, normalizeAccessEmails } from "../lib/cloudflareTunnel";
+import { configuredRemoteAccess, deleteOrphanTunnels, getAllowedAccessEmails, listOrphanTunnels, normalizeAccessEmails } from "../lib/cloudflareTunnel";
 
 const app = new Hono<{ Bindings: Env; Variables: Variables }>();
 app.use("*", requireAuth);
@@ -27,6 +27,39 @@ app.put("/ssh-access", requireRole("admin"), async (c) => {
     ).bind(String(version)),
   ]);
   return c.json({ emails, version });
+});
+
+// Lists ScreenBoard-managed Cloudflare Tunnels no device still uses, the leftovers
+// of reprovisioning. Admin-only: it exposes account-wide Tunnel names.
+app.get("/tunnels", requireRole("admin"), async (c) => {
+  if (!configuredRemoteAccess(c.env)) return c.json({ configured: false, orphans: [], in_use: 0 });
+  try {
+    const { orphans, inUse } = await listOrphanTunnels(c.env);
+    return c.json({ configured: true, orphans, in_use: inUse });
+  } catch (error) {
+    return c.json({ error: error instanceof Error ? error.message : "list_failed" }, 502);
+  }
+});
+
+// Deletes orphaned Tunnels. With no `ids`, cleans up every current orphan; the lib
+// re-verifies each id is still orphaned before deleting.
+app.post("/tunnels/cleanup", requireRole("admin"), async (c) => {
+  if (!configuredRemoteAccess(c.env)) return c.json({ error: "remote_access_not_configured" }, 409);
+  const body: { ids?: unknown } = await c.req.json<{ ids?: unknown }>().catch(() => ({}));
+  let ids: string[];
+  if (body.ids === undefined) {
+    ids = (await listOrphanTunnels(c.env)).orphans.map((t) => t.id);
+  } else if (Array.isArray(body.ids) && body.ids.every((x): x is string => typeof x === "string")) {
+    ids = body.ids;
+  } else {
+    return c.json({ error: "invalid_ids" }, 400);
+  }
+  try {
+    const result = await deleteOrphanTunnels(c.env, ids);
+    return c.json(result);
+  } catch (error) {
+    return c.json({ error: error instanceof Error ? error.message : "cleanup_failed" }, 502);
+  }
 });
 
 export default app;

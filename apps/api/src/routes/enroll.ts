@@ -44,7 +44,9 @@ app.post("/enroll", async (c) => {
   )
     .bind(
       uuid,
-      info.hostname || uuid.slice(0, 8),
+      // Default the display name to the stable UUID (not the hostname, which can
+      // change). It is editable later from the device detail page.
+      uuid,
       info.hostname,
       info.serial,
       info.os_version,
@@ -60,7 +62,7 @@ app.post("/enroll", async (c) => {
 
   // Provisioning is intentionally best-effort: a signage device must still be
   // usable when Cloudflare Zero Trust has not yet been configured.
-  await provisionRemoteAccess(c.env, { uuid, name: info.hostname || uuid.slice(0, 8) });
+  await provisionRemoteAccess(c.env, { uuid });
 
   await c.env.DB.prepare(
     "UPDATE enrollment_tokens SET used_by_uuid = ? WHERE token = ?",

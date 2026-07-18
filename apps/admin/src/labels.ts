@@ -23,7 +23,6 @@ export const severityLabels: Record<string, string> = {
 export const roleLabels: Record<string, string> = {
   admin: "管理員",
   operator: "操作員",
-  viewer: "檢視者",
 };
 
 export const groupTypeLabels: Record<string, string> = {
@@ -85,7 +84,7 @@ export const sceneStatusLabels: Record<string, string> = {
 export const widgetKindLabels: Record<string, string> = {
   image: "圖片",
   video: "影片",
-  carousel: "輪播",
+  carousel: "媒體",
   web: "網頁",
   text: "文字",
   ticker: "跑馬燈",

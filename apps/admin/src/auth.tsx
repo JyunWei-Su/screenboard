@@ -4,7 +4,7 @@ import { api, clearToken, getToken, setToken } from "./api";
 export interface User {
   id: number;
   name: string;
-  role: "admin" | "operator" | "viewer";
+  role: "admin" | "operator";
 }
 
 interface AuthCtx {

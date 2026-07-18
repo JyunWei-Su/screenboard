@@ -132,7 +132,7 @@ screenboard/
 - `screenshots`：`id, device_id, r2_key, taken_at, trigger(auto/manual), analysis_result`。
 - `ota_packages`：`id, channel(stable/beta), version, r2_key, checksum, signature, notes`。
 - `ota_deployments`：`id, package_id, strategy(all/group/canary), target, percent, status`。
-- `users`：`id, name, totp_secret(加密), role(admin/operator/viewer)`（免帳密，每個管理身分綁一組 TOTP）。
+- `users`：`id, name, totp_secret(加密), role(admin/operator)`（免帳密，每個管理身分綁一組 TOTP）。
 - `sessions`：`token_id, user_id, issued_at, expires_at`（Session JWT + 撤銷清單）。
 - `commands`：指令稽核 `id, device_id, type, payload, status, issued_by, issued_at, ack_at`。
 - `events`：告警/事件 `id, type, device_id, severity, message, created_at, resolved_at`。

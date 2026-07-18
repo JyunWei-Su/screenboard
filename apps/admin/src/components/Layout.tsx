@@ -19,7 +19,6 @@ import {
   IconSceneStack,
   IconSettings,
   IconSun,
-  IconUsers,
 } from "./icons";
 
 type NavItem = {
@@ -38,7 +37,6 @@ const nav: NavItem[] = [
   { to: "/media", label: "媒體", Icon: IconImage },
   { to: "/schedules", label: "排程", Icon: IconCalendar },
   { to: "/ota", label: "OTA", Icon: IconDownload },
-  { to: "/users", label: "使用者", Icon: IconUsers },
   { to: "/settings", label: "系統設定", Icon: IconSettings },
 ];
 

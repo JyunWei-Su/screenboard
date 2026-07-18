@@ -3,7 +3,7 @@ import QRCode from "qrcode";
 import { api } from "../api";
 import { useFetch } from "../hooks";
 import { useAuth } from "../auth";
-import { EmptyRow, PageHeader, TableCard } from "../components/ui";
+import { EmptyRow, TableCard } from "../components/ui";
 import { label, roleLabels } from "../labels";
 
 interface UserRow {
@@ -23,10 +23,11 @@ interface Provision {
 const roleBadge: Record<string, string> = {
   admin: "bg-brand-100 text-brand-700",
   operator: "bg-blue-100 text-blue-700",
-  viewer: "bg-slate-100 text-slate-600",
 };
 
-export default function Users() {
+// Rendered inside the 系統設定 (Settings) page as the「使用者」tab, so it omits
+// its own PageHeader. Still guards on admin as a defensive fallback.
+export default function UsersSettings() {
   const { user } = useAuth();
   const isAdmin = user?.role === "admin";
   const { data, reload } = useFetch<UserRow[]>(isAdmin ? "/api/users" : null);
@@ -74,8 +75,6 @@ export default function Users() {
 
   return (
     <div className="space-y-5">
-      <PageHeader title="使用者" subtitle="管理員、操作員與檢視者帳號" />
-
       <div className="card grid grid-cols-1 gap-3 sm:grid-cols-2 sm:items-end lg:grid-cols-[1fr_auto_auto]">
         <div>
           <label className="label">名稱</label>
@@ -86,7 +85,6 @@ export default function Users() {
           <select className="select" value={role} onChange={(e) => setRole(e.target.value)}>
             <option value="admin">管理員</option>
             <option value="operator">操作員</option>
-            <option value="viewer">檢視者</option>
           </select>
         </div>
         <button className="btn-primary w-full sm:w-auto" onClick={create}>

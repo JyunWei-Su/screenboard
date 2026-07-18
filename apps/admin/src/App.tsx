@@ -13,7 +13,6 @@ import ScenePlaylistEditor from "./pages/ScenePlaylistEditor";
 import Media from "./pages/Media";
 import Schedules from "./pages/Schedules";
 import Ota from "./pages/Ota";
-import Users from "./pages/Users";
 import Settings from "./pages/Settings";
 
 export default function App() {
@@ -40,7 +39,8 @@ export default function App() {
         <Route path="/media" element={<Media />} />
         <Route path="/schedules" element={<Schedules />} />
         <Route path="/ota" element={<Ota />} />
-        <Route path="/users" element={<Users />} />
+        {/* 使用者管理已併入系統設定；保留舊路徑導向。 */}
+        <Route path="/users" element={<Navigate to="/settings" replace />} />
         <Route path="/settings" element={<Settings />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Route>

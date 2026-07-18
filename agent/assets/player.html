@@ -154,7 +154,7 @@
     const items = Array.isArray(cfg.items) ? cfg.items : [];
     const wrap = document.createElement('div');
     wrap.style.position = 'relative';
-    if (!items.length) { showWidgetError(wrap, '輪播尚無項目'); return { el: wrap, ready: Promise.resolve() }; }
+    if (!items.length) { showWidgetError(wrap, '媒體尚無項目'); return { el: wrap, ready: Promise.resolve() }; }
     let index = 0, timer = null, refreshTimer = null, current = null, stopped = false;
     const stop = () => { stopped = true; if (timer) clearTimeout(timer); if (refreshTimer) clearInterval(refreshTimer); if (current && current.tagName === 'VIDEO') current.pause(); };
     ctx.timers.push(stop);

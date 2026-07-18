@@ -258,65 +258,49 @@ export default function DeviceDetail() {
       </div>
 
       <div className="grid gap-6 lg:grid-cols-3">
-        <div className="card lg:col-span-2">
-          <h2 className="mb-3 text-sm font-semibold text-slate-700 dark:text-slate-200">資訊</h2>
-          <dl className="grid grid-cols-1 gap-x-6 gap-y-2 text-sm sm:grid-cols-2">
-            <Info k="UUID" v={d.uuid} mono />
-            <Info k="主機名稱" v={d.hostname} />
-            <Info k="序號" v={d.serial} />
-            <Info k="OS" v={d.os_version} />
-            <Info k="Agent" v={d.agent_version} />
-            <Info k="IP" v={d.ip} />
-            <Info k="MAC" v={d.mac} mono />
-            <Info k="解析度" v={d.resolution} />
-            <Info k="最後上線" v={d.last_seen_at ?? "—"} />
-          </dl>
-          <div className="mt-4 border-t border-slate-100 pt-4 dark:border-dark-border">
-            <label className="mb-1 block text-xs text-slate-500">主機名稱</label>
-            <div className="flex flex-col gap-2 sm:flex-row">
-              <input
-                className="input min-w-0 flex-1"
-                value={hostname}
-                disabled={!writable || actionBusy}
-                maxLength={63}
-                pattern="[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?"
-                onChange={(e) => setHostname(e.target.value)}
-              />
-              {writable && (
-                <button className="btn-primary shrink-0" disabled={actionBusy || hostname.trim() === d.hostname} onClick={() => void updateHostname()}>
-                  儲存並重新開機
-                </button>
-              )}
-            </div>
-            <p className="mt-1 text-xs text-slate-400">此操作會更新裝置名稱，並立即重新開機以完成套用。</p>
-          </div>
-          {d.health && (
-            <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-3">
-              <Meter label="CPU" v={d.health.cpu} />
-              <Meter label="記憶體" v={d.health.memory} />
-              <Meter label="磁碟" v={d.health.disk} />
-            </div>
-          )}
-        </div>
-
-        <div className="card space-y-4">
-          <div>
-            <h2 className="mb-2 text-sm font-semibold text-slate-700 dark:text-slate-200">遠端操作</h2>
-            <div className="flex flex-wrap gap-2">
-              {COMMANDS.map((c) => (
-                <button
-                  key={c.type}
-                  className={c.danger ? "btn-danger" : "btn-ghost"}
+        <div className="space-y-6 lg:col-span-2">
+          <div className="card">
+            <h2 className="mb-3 text-sm font-semibold text-slate-700 dark:text-slate-200">資訊</h2>
+            <dl className="grid grid-cols-1 gap-x-6 gap-y-2 text-sm sm:grid-cols-2">
+              <Info k="UUID" v={d.uuid} mono />
+              <Info k="主機名稱" v={d.hostname} />
+              <Info k="序號" v={d.serial} />
+              <Info k="OS" v={d.os_version} />
+              <Info k="Agent" v={d.agent_version} />
+              <Info k="IP" v={d.ip} />
+              <Info k="MAC" v={d.mac} mono />
+              <Info k="解析度" v={d.resolution} />
+              <Info k="最後上線" v={d.last_seen_at ?? "—"} />
+            </dl>
+            <div className="mt-4 border-t border-slate-100 pt-4 dark:border-dark-border">
+              <label className="mb-1 block text-xs text-slate-500">主機名稱</label>
+              <div className="flex flex-col gap-2 sm:flex-row">
+                <input
+                  className="input min-w-0 flex-1"
+                  value={hostname}
                   disabled={!writable || actionBusy}
-                  onClick={() => runCommand(c.type)}
-                >
-                  {c.label}
-                </button>
-              ))}
+                  maxLength={63}
+                  pattern="[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?"
+                  onChange={(e) => setHostname(e.target.value)}
+                />
+                {writable && (
+                  <button className="btn-primary shrink-0" disabled={actionBusy || hostname.trim() === d.hostname} onClick={() => void updateHostname()}>
+                    儲存並重新開機
+                  </button>
+                )}
+              </div>
+              <p className="mt-1 text-xs text-slate-400">此操作會更新裝置名稱，並立即重新開機以完成套用。</p>
             </div>
+            {d.health && (
+              <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-3">
+                <Meter label="CPU" v={d.health.cpu} />
+                <Meter label="記憶體" v={d.health.memory} />
+                <Meter label="磁碟" v={d.health.disk} />
+              </div>
+            )}
           </div>
 
-          <div>
+          <div className="card">
             <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
               <h2 className="text-sm font-semibold text-slate-700 dark:text-slate-200">SSH / Cloudflare Tunnel</h2>
               {writable && <button className="btn-ghost" onClick={() => reloadRemoteAccess()}>重新整理</button>}
@@ -361,6 +345,24 @@ export default function DeviceDetail() {
                 </button>
               </div>
             )}
+          </div>
+        </div>
+
+        <div className="card space-y-4">
+          <div>
+            <h2 className="mb-2 text-sm font-semibold text-slate-700 dark:text-slate-200">遠端操作</h2>
+            <div className="flex flex-wrap gap-2">
+              {COMMANDS.map((c) => (
+                <button
+                  key={c.type}
+                  className={c.danger ? "btn-danger" : "btn-ghost"}
+                  disabled={!writable || actionBusy}
+                  onClick={() => runCommand(c.type)}
+                >
+                  {c.label}
+                </button>
+              ))}
+            </div>
           </div>
 
           <div>

@@ -254,7 +254,7 @@ For local bootstrap, set the secrets in `apps/api/.dev.vars` (same keys as produ
 | 6. Screenshots (auto + on demand) | `agent` capture + `/api/agent/screenshot`, black-screen detection, DeviceDetail |
 | 7. OTA (stable/beta, canary) | `ota_packages`/`ota_deployments`, `agent/ota.go`, Ota page |
 | 8. CMS (media, versions, tags) | `media*` tables, `routes/media.ts`, Media page |
-| 9. Users & RBAC | `users` + TOTP, `requireRole`, Users page (admin/operator/viewer) |
+| 9. Users & RBAC | `users` + TOTP, `requireRole`, Users page (admin/operator) |
 | 10. Dashboard & stats | `routes/dashboard.ts`, Dashboard page |
 | 11. Cloudflare integration | Workers/D1/R2/DO; Tunnel for optional remote debug |
 

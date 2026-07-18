@@ -6,7 +6,6 @@ import { useFetch } from "../hooks";
 import { canWrite, useAuth } from "../auth";
 import { PageHeader } from "../components/ui";
 import {
-  IconCalendar,
   IconCheck,
   IconClock,
   IconCompass,
@@ -15,12 +14,7 @@ import {
   IconEyeOff,
   IconGlobe,
   IconImage,
-  IconLayers,
-  IconList,
   IconLock,
-  IconMonitor,
-  IconRepeat,
-  IconSceneStack,
   IconTrash,
   IconType,
   IconUnlock,
@@ -92,21 +86,15 @@ const WIDGET_KINDS: WidgetKind[] = [
   "clock",
 ];
 
+// One icon per widget kind, shared by the「新增元件」palette, the selected-widget
+// header, and the「圖層」list so a given kind always looks the same.
 const KIND_ICONS: Record<string, React.ComponentType<{ className?: string }>> = {
-  carousel: IconRepeat,
+  carousel: IconImage,
   web: IconGlobe,
   text: IconType,
   direction: IconCompass,
   clock: IconClock,
 };
-
-const WIDGET_BUTTON_ICONS = {
-  carousel: IconSceneStack,
-  web: IconMonitor,
-  text: IconList,
-  direction: IconLayers,
-  clock: IconCalendar,
-} as const;
 
 const PRESETS: { label: string; w: number; h: number }[] = [
   { label: "1920×1080 (橫)", w: 1920, h: 1080 },
@@ -809,7 +797,7 @@ export default function SceneEditor() {
         <div className="card flex flex-wrap items-center gap-2">
           <span className="text-xs font-medium text-slate-500 dark:text-dark-muted">新增元件:</span>
           {WIDGET_KINDS.map((k) => {
-            const Icon = WIDGET_BUTTON_ICONS[k as keyof typeof WIDGET_BUTTON_ICONS];
+            const Icon = KIND_ICONS[k];
             return (
               <button
                 key={k}
@@ -1197,8 +1185,8 @@ function computeWarnings(widgets: EditorWidget[], W: number, H: number): string[
     }
     if (w.kind === "carousel") {
       const cfg = w.config as CarouselWidgetConfig;
-      if (!cfg.items?.length) out.push(`輪播元件「${nameOf(w, list)}」至少需要一個項目`);
-      if ((cfg.items ?? []).some((item) => !item.media_id && !item.url)) out.push(`輪播元件「${nameOf(w, list)}」有未設定素材的項目`);
+      if (!cfg.items?.length) out.push(`媒體元件「${nameOf(w, list)}」至少需要一個項目`);
+      if ((cfg.items ?? []).some((item) => !item.media_id && !item.url)) out.push(`媒體元件「${nameOf(w, list)}」有未設定素材的項目`);
     }
     if (w.kind === "web") {
       const cfg = w.config as WebWidgetConfig;
@@ -1311,7 +1299,7 @@ function WidgetView({
     }
     case "carousel": {
       const cfg = w.config as CarouselWidgetConfig;
-      return <Placeholder icon={<IconRepeat className="h-8 w-8" />} text={cfg.items?.length ? `輪播 ${cfg.items.length} 個項目` : "尚未加入輪播項目"} dark />;
+      return <Placeholder icon={<IconImage className="h-8 w-8" />} text={cfg.items?.length ? `媒體 ${cfg.items.length} 個項目` : "尚未加入媒體項目"} dark />;
     }
     case "web": {
       const cfg = w.config as WebWidgetConfig;
@@ -1552,7 +1540,7 @@ function CarouselForm({
   return (
     <div className="space-y-3">
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <span className="text-sm font-medium">輪播項目</span>
+        <span className="text-sm font-medium">媒體項目</span>
         <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={cfg.loop !== false} disabled={disabled} onChange={(e) => onChange({ ...cfg, loop: e.target.checked })} />循環</label>
       </div>
       {items.map((item, index) => (

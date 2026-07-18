@@ -1,7 +1,7 @@
 // Shared types & protocol contracts between the Workers API, admin console, and Go agent.
 // The Go agent mirrors the wire-format types in agent/internal/protocol.
 
-export type Role = "admin" | "operator" | "viewer";
+export type Role = "admin" | "operator";
 
 export type DeviceStatus = "online" | "offline" | "warning" | "maintenance";
 

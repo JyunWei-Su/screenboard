@@ -1,10 +1,11 @@
 import { useState } from "react";
 import { Link } from "react-router-dom";
-import { api } from "../api";
+import { api, apiBase } from "../api";
 import { useFetch } from "../hooks";
 import { canWrite, useAuth } from "../auth";
 import { EmptyRow, PageHeader, TableCard } from "../components/ui";
 import { label, statusLabels } from "../labels";
+import { useToast } from "../toast";
 
 interface DeviceRow {
   uuid: string;
@@ -45,8 +46,13 @@ function Usage({ value }: { value: number | null }) {
 
 export default function Devices() {
   const { user } = useAuth();
+  const { showToast } = useToast();
   const { data, loading } = useFetch<DeviceRow[]>("/api/devices");
   const [token, setToken] = useState<string | null>(null);
+
+  const installCommand = token
+    ? `curl -fsSL ${apiBase() || "https://YOUR-API"}/install.sh | sudo bash -s -- ${token}`
+    : "";
 
   async function enroll() {
     const res = await api.post<{ token: string; expires_in_hours: number }>(
@@ -56,12 +62,21 @@ export default function Devices() {
     setToken(res.token);
   }
 
+  async function copyCommand() {
+    try {
+      await navigator.clipboard.writeText(installCommand);
+      showToast("已複製安裝指令", "success");
+    } catch {
+      showToast("複製失敗，請手動選取指令。", "error");
+    }
+  }
+
   return (
     <div className="space-y-5">
       <PageHeader title="裝置" subtitle="已註冊的看板播放器">
         {canWrite(user) && (
           <button className="btn-primary" onClick={enroll}>
-            + 註冊權杖
+            + 註冊裝置
           </button>
         )}
       </PageHeader>
@@ -69,11 +84,19 @@ export default function Devices() {
       {token && (
         <div className="card animate-slide-in border-brand-200 bg-brand-50 dark:border-brand-500/30 dark:bg-brand-500/10">
           <div className="text-sm font-medium text-brand-700 dark:text-brand-200">
-            一次性註冊權杖(24 小時內有效)— 請貼入 Debian 安裝指令:
+            一次性註冊權杖(24 小時內有效)— 在 Debian 裝置上執行以下安裝指令:
           </div>
-          <code className="mt-2 block break-all rounded-lg border border-brand-100 bg-white p-2.5 text-xs dark:border-dark-border dark:bg-dark-raised dark:text-dark-text">
-            {token}
-          </code>
+          <div className="mt-2 flex items-start gap-2">
+            <code className="block flex-1 break-all rounded-lg border border-brand-100 bg-white p-2.5 text-xs dark:border-dark-border dark:bg-dark-raised dark:text-dark-text">
+              {installCommand}
+            </code>
+            <button type="button" className="btn-ghost btn-sm shrink-0" onClick={() => void copyCommand()}>
+              複製
+            </button>
+          </div>
+          <div className="mt-2 text-xs text-brand-700/70 dark:text-brand-200/70">
+            權杖：<span className="font-mono break-all">{token}</span>
+          </div>
         </div>
       )}
 
@@ -83,7 +106,7 @@ export default function Devices() {
             <tr>
               <th className="th">名稱</th>
               <th className="th">狀態</th>
-              <th className="th">IP</th>
+              <th className="th">Local IP</th>
               <th className="th">Agent 版本</th>
               <th className="th">CPU</th>
               <th className="th">記憶體</th>
@@ -124,7 +147,7 @@ export default function Devices() {
             {loading && <EmptyRow colSpan={8}>載入中…</EmptyRow>}
             {data && data.length === 0 && (
               <EmptyRow colSpan={8}>
-                尚無裝置。請建立註冊權杖並啟動 agent。
+                尚無裝置。請點「註冊裝置」取得安裝指令。
               </EmptyRow>
             )}
           </tbody>

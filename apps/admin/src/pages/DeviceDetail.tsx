@@ -93,6 +93,7 @@ export default function DeviceDetail() {
   const [selectedScreenshotIds, setSelectedScreenshotIds] = useState<Set<number>>(new Set());
   const [selectedCommandIds, setSelectedCommandIds] = useState<Set<string>>(new Set());
   const [hostname, setHostname] = useState("");
+  const [name, setName] = useState("");
   const [actionBusy, setActionBusy] = useState(false);
 
   useEffect(() => {
@@ -102,6 +103,10 @@ export default function DeviceDetail() {
   useEffect(() => {
     if (d) setHostname(d.hostname);
   }, [d?.uuid, d?.hostname]);
+
+  useEffect(() => {
+    if (d) setName(d.name);
+  }, [d?.uuid, d?.name]);
 
   useEffect(() => {
     setSelectedScreenshotIds((selected) => new Set(
@@ -173,6 +178,24 @@ export default function DeviceDetail() {
     } catch (error) {
       showToast(error instanceof Error ? error.message : "SSH 修復失敗", "error");
       await reloadRemoteAccess();
+    }
+  }
+  async function updateName() {
+    const next = name.trim();
+    if (!next) {
+      showToast("裝置名稱不可為空。", "error");
+      return;
+    }
+    if (next === d?.name) return;
+    setActionBusy(true);
+    try {
+      await api.patch(`/api/devices/${uuid}`, { name: next });
+      showToast("已更新裝置名稱。", "success");
+      reload();
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : "更新裝置名稱失敗", "error");
+    } finally {
+      setActionBusy(false);
     }
   }
   async function updateHostname() {
@@ -267,11 +290,32 @@ export default function DeviceDetail() {
               <Info k="序號" v={d.serial} />
               <Info k="OS" v={d.os_version} />
               <Info k="Agent" v={d.agent_version} />
-              <Info k="IP" v={d.ip} />
+              <Info k="Local IP" v={d.ip} />
               <Info k="MAC" v={d.mac} mono />
               <Info k="解析度" v={d.resolution} />
               <Info k="最後上線" v={d.last_seen_at ?? "—"} />
             </dl>
+            <div className="mt-4 border-t border-slate-100 pt-4 dark:border-dark-border">
+              <label className="mb-1 block text-xs text-slate-500">裝置名稱</label>
+              <div className="flex flex-col gap-2 sm:flex-row">
+                <input
+                  className="input min-w-0 flex-1"
+                  value={name}
+                  disabled={!writable || actionBusy}
+                  maxLength={80}
+                  onChange={(e) => setName(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") void updateName();
+                  }}
+                />
+                {writable && (
+                  <button className="btn-primary shrink-0" disabled={actionBusy || !name.trim() || name.trim() === d.name} onClick={() => void updateName()}>
+                    儲存名稱
+                  </button>
+                )}
+              </div>
+              <p className="mt-1 text-xs text-slate-400">主控台顯示用的名稱，不會重新開機，也不影響裝置作業系統的主機名稱。</p>
+            </div>
             <div className="mt-4 border-t border-slate-100 pt-4 dark:border-dark-border">
               <label className="mb-1 block text-xs text-slate-500">主機名稱</label>
               <div className="flex flex-col gap-2 sm:flex-row">
@@ -289,7 +333,7 @@ export default function DeviceDetail() {
                   </button>
                 )}
               </div>
-              <p className="mt-1 text-xs text-slate-400">此操作會更新裝置名稱，並立即重新開機以完成套用。</p>
+              <p className="mt-1 text-xs text-slate-400">變更裝置作業系統的主機名稱，會立即重新開機以完成套用。</p>
             </div>
             {d.health && (
               <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-3">

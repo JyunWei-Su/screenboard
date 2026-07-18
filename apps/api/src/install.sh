@@ -301,15 +301,38 @@ cat >/usr/local/bin/screenboard-sync-time <<'TIME'
 #!/bin/sh
 set -eu
 [ "$#" -eq 0 ] || { echo "no arguments accepted" >&2; exit 2; }
-command -v timedatectl >/dev/null 2>&1 || { echo "timedatectl unavailable" >&2; exit 1; }
-timedatectl set-ntp true
-systemctl restart systemd-timesyncd.service
-SYNCED="$(timedatectl show --property=NTPSynchronized --value 2>/dev/null || echo unknown)"
-NOW="$(timedatectl show --property=TimeUSec --value 2>/dev/null || date -Is)"
+TIMEDATECTL="$(command -v timedatectl || true)"
+SYSTEMCTL="$(command -v systemctl || true)"
+[ -n "$TIMEDATECTL" ] || { echo "timedatectl unavailable" >&2; exit 1; }
+[ -n "$SYSTEMCTL" ] || { echo "systemctl unavailable" >&2; exit 1; }
+"$TIMEDATECTL" set-ntp true
+"$SYSTEMCTL" restart systemd-timesyncd.service
+SYNCED="$("$TIMEDATECTL" show --property=NTPSynchronized --value 2>/dev/null || echo unknown)"
+NOW="$("$TIMEDATECTL" show --property=TimeUSec --value 2>/dev/null || date -Is)"
 printf 'NTP enabled; synchronized=%s; time=%s\n' "$SYNCED" "$NOW"
 TIME
 chown root:root /usr/local/bin/screenboard-sync-time
 chmod 755 /usr/local/bin/screenboard-sync-time
+
+# Hostname helper. It accepts exactly one hostname-shaped argument and invokes
+# hostnamectl directly, keeping the Agent's sudo permission narrowly scoped.
+cat >/usr/local/bin/screenboard-set-hostname <<'HOSTNAME'
+#!/bin/sh
+set -eu
+[ "$#" -eq 1 ] || { echo "usage: screenboard-set-hostname <hostname>" >&2; exit 2; }
+if [ "$1" = "--check" ]; then
+  echo "hostname helper ready"
+  exit 0
+fi
+case "$1" in
+  *[!A-Za-z0-9-]*|""|-*|*-) echo "invalid hostname" >&2; exit 2 ;;
+esac
+[ "${#1}" -le 63 ] || { echo "hostname too long" >&2; exit 2; }
+hostnamectl set-hostname "$1"
+printf 'hostname set to %s\n' "$1"
+HOSTNAME
+chown root:root /usr/local/bin/screenboard-set-hostname
+chmod 755 /usr/local/bin/screenboard-set-hostname
 
 # Remote full-reinstall helper. Re-runs this installer as root (repairs binary,
 # helpers, sudoers, cloudflared, kiosk session) and reboots. The persisted
@@ -331,10 +354,15 @@ chmod 755 /usr/local/bin/screenboard-reinstall
 # of an auth prompt.
 install -d -m 750 /etc/sudoers.d
 cat >/etc/sudoers.d/screenboard-agent <<SUDOERS
-$KIOSK_USER ALL=(root) NOPASSWD: /usr/bin/systemctl reboot, /usr/bin/systemctl poweroff, /usr/local/bin/screenboard-apply-update, /usr/local/bin/screenboard-repair-tunnel, /usr/local/bin/screenboard-reinstall, /usr/local/bin/screenboard-sync-time
+$KIOSK_USER ALL=(root) NOPASSWD: /usr/bin/systemctl reboot, /usr/bin/systemctl poweroff, /usr/local/bin/screenboard-apply-update, /usr/local/bin/screenboard-repair-tunnel, /usr/local/bin/screenboard-reinstall, /usr/local/bin/screenboard-sync-time, /usr/local/bin/screenboard-set-hostname *
 SUDOERS
 chmod 440 /etc/sudoers.d/screenboard-agent
 visudo -cf /etc/sudoers.d/screenboard-agent
+# Fail the installation immediately if the unprivileged Agent user cannot
+# elevate through both helpers. This catches sudoers/path regressions before a
+# remote operator encounters an opaque command failure later.
+sudo -u "$KIOSK_USER" sudo -n /usr/local/bin/screenboard-sync-time >/dev/null
+sudo -u "$KIOSK_USER" sudo -n /usr/local/bin/screenboard-set-hostname --check >/dev/null
 
 echo "==> [8/8] Enabling boot-to-console and rebooting"
 systemctl set-default multi-user.target

@@ -33,7 +33,7 @@ export default function Groups() {
     reload();
   }
   async function remove(id: number) {
-    if (!confirm("要刪除群組嗎?")) return;
+    if (!confirm("要刪除裝置群組嗎?")) return;
     await api.del(`/api/groups/${id}`);
     reload();
   }
@@ -42,7 +42,7 @@ export default function Groups() {
 
   return (
     <div className="space-y-5">
-      <PageHeader title="群組" subtitle="依場域、建築或樓層組織裝置" />
+      <PageHeader title="裝置群組" subtitle="依場域、建築或樓層組織裝置" />
 
       {writable && (
         <div className="card grid grid-cols-1 gap-3 sm:grid-cols-2 sm:items-end lg:grid-cols-[1fr_auto_auto_auto]">
@@ -105,7 +105,7 @@ export default function Groups() {
                 </td>
               </tr>
             ))}
-            {data && data.length === 0 && <EmptyRow colSpan={4}>尚無群組。</EmptyRow>}
+            {data && data.length === 0 && <EmptyRow colSpan={4}>尚無裝置群組。</EmptyRow>}
           </tbody>
         </table>
       </TableCard>

@@ -61,7 +61,6 @@ environment:
 ```text
 CF_ACCOUNT_ID=<Cloudflare account ID>
 CF_ZONE_ID=<Zone ID for example.com>
-CF_ACCESS_ALLOWED_EMAILS=ops@example.com,admin@example.com
 ```
 
 The deployment script reads the root domain name from `CF_ZONE_ID`. Each enrolled

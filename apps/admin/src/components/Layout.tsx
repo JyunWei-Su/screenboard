@@ -17,6 +17,7 @@ import {
   IconMoon,
   IconScene,
   IconSceneStack,
+  IconSettings,
   IconSun,
   IconUsers,
 } from "./icons";
@@ -31,14 +32,14 @@ type NavItem = {
 const nav: NavItem[] = [
   { to: "/", label: "儀表板", end: true, Icon: IconDashboard },
   { to: "/devices", label: "裝置", Icon: IconMonitor },
-  { to: "/groups", label: "群組", Icon: IconLayers },
-  { to: "/playlists", label: "播放清單", Icon: IconList },
+  { to: "/groups", label: "裝置群組", Icon: IconLayers },
   { to: "/scenes", label: "場景", Icon: IconScene },
-  { to: "/scene-playlists", label: "場景輪播", Icon: IconSceneStack },
+  { to: "/scene-groups", label: "場景群組", Icon: IconSceneStack },
   { to: "/media", label: "媒體", Icon: IconImage },
   { to: "/schedules", label: "排程", Icon: IconCalendar },
   { to: "/ota", label: "OTA", Icon: IconDownload },
   { to: "/users", label: "使用者", Icon: IconUsers },
+  { to: "/settings", label: "系統設定", Icon: IconSettings },
 ];
 
 function ThemeToggle() {
@@ -166,7 +167,7 @@ export default function Layout() {
       </aside>
 
       {/* Main column */}
-      <div className="flex min-h-screen flex-col lg:pl-64">
+      <div className="flex min-h-screen min-w-0 flex-col lg:pl-64">
         <header className="sticky top-0 z-20 flex h-16 items-center gap-3 border-b border-slate-200 bg-white/80 px-4 backdrop-blur sm:px-6 dark:border-dark-border dark:bg-dark-surface/80">
           <button
             className="btn-ghost btn-sm !p-2 lg:hidden"
@@ -178,7 +179,7 @@ export default function Layout() {
           <div className="hidden text-sm text-slate-500 sm:block dark:text-dark-muted">
             數位看板管理
           </div>
-          <div className="ml-auto flex items-center gap-2 text-sm">
+          <div className="ml-auto flex min-w-0 items-center gap-2 text-sm">
             <span className="hidden text-slate-600 sm:inline dark:text-dark-muted">
               {user?.name} <span className="text-slate-400 dark:text-dark-subtle">({user?.role})</span>
             </span>
@@ -190,7 +191,7 @@ export default function Layout() {
           </div>
         </header>
 
-        <main className="mx-auto w-full max-w-7xl flex-1 p-4 sm:p-6 lg:p-8">
+        <main className="mx-auto w-full min-w-0 max-w-7xl flex-1 p-4 sm:p-6 lg:p-8">
           <div className="animate-fade-in">
             <Outlet />
           </div>

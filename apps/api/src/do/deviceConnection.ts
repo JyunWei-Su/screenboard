@@ -127,7 +127,7 @@ export class DeviceConnection {
         });
       } else if (msg.browser_error) {
         await recordEvent(this.env, {
-          type: "playlist_error",
+          type: "screenshot_error",
           device_id: uuid,
           severity: "warning",
           message: `Player error: ${msg.browser_error}`,

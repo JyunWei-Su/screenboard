@@ -147,25 +147,7 @@ func (c *Client) PostDeviceInfo(info DeviceInfo) error {
 	return nil
 }
 
-func (c *Client) GetPlaylist() (*ResolvedPlaylist, error) {
-	resp, err := c.do("GET", "/api/agent/playlist", "", nil)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != 200 {
-		return nil, fmt.Errorf("playlist: %s", resp.Status)
-	}
-	out := &ResolvedPlaylist{}
-	if err := json.NewDecoder(resp.Body).Decode(out); err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
-// GetTarget fetches the single effective playback target (playlist / scene /
-// scene_playlist / none). A non-200 (e.g. an older API without this endpoint)
-// is reported as an error so the caller can fall back to GetPlaylist.
+// GetTarget fetches the single effective scene or scene-group playback target.
 func (c *Client) GetTarget() (*ResolvedTarget, error) {
 	resp, err := c.do("GET", "/api/agent/target", "", nil)
 	if err != nil {

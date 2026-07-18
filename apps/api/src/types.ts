@@ -13,8 +13,6 @@ export interface Env {
   CF_ACCOUNT_ID?: string;
   CF_ZONE_ID?: string;
   CF_ZONE_NAME?: string;
-  CF_ACCESS_ALLOWED_EMAILS?: string;
-
   // Secrets (wrangler secret put ...)
   JWT_SECRET: string; // admin session JWTs
   DEVICE_JWT_SECRET: string; // device access tokens

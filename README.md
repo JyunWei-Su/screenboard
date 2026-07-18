@@ -63,7 +63,6 @@ device, configure these non-secret Worker variables:
 ```text
 CF_ACCOUNT_ID=<Cloudflare account id>
 CF_ZONE_ID=<zone id for the managed root domain>
-CF_ACCESS_ALLOWED_EMAILS=ops@example.com,admin@example.com
 ```
 
 The deploy script reads the zone name from `CF_ZONE_ID`. Each device receives
@@ -76,7 +75,8 @@ enrolling a device.
 
 ScreenBoard creates a Cloudflare `ssh` Access application and its application-specific
 short-lived certificate authority automatically. The installer trusts that CA in
-`sshd` and creates unprivileged Linux users from `CF_ACCESS_ALLOWED_EMAILS` email
+`sshd` and creates unprivileged Linux users from the SSH Access email list managed in
+the Admin console's **System Settings** page.
 prefixes (for example, `ops@example.com` creates `ops`). A TLS protocol error on an old
 `<device-uuid>.ssh.<zone>` hostname is instead a certificate-depth issue; use
 **Reprovision SSH** to migrate it to `ssh-<device-uuid>.<zone>`.

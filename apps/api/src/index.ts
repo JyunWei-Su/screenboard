@@ -8,7 +8,6 @@ import agentRoutes from "./routes/agent";
 import contentRoutes from "./routes/content";
 import devicesRoutes from "./routes/devices";
 import groupsRoutes from "./routes/groups";
-import playlistsRoutes from "./routes/playlists";
 import scenesRoutes from "./routes/scenes";
 import scenePlaylistsRoutes from "./routes/scenePlaylists";
 import schedulesRoutes from "./routes/schedules";
@@ -19,6 +18,7 @@ import eventsRoutes from "./routes/events";
 import dashboardRoutes from "./routes/dashboard";
 import usersRoutes from "./routes/users";
 import installRoutes from "./routes/install";
+import settingsRoutes from "./routes/settings";
 
 import { pruneRetention, sweepOffline } from "./lib/scheduled";
 import { DeviceConnection } from "./do/deviceConnection";
@@ -42,7 +42,6 @@ app.route("/api/content", contentRoutes);
 // Admin (each router enforces requireAuth internally)
 app.route("/api/devices", devicesRoutes);
 app.route("/api/groups", groupsRoutes);
-app.route("/api/playlists", playlistsRoutes);
 app.route("/api/scenes", scenesRoutes);
 app.route("/api/scene-playlists", scenePlaylistsRoutes);
 app.route("/api/schedules", schedulesRoutes);
@@ -52,6 +51,7 @@ app.route("/api/ota", otaRoutes);
 app.route("/api/events", eventsRoutes);
 app.route("/api/dashboard", dashboardRoutes);
 app.route("/api/users", usersRoutes);
+app.route("/api/settings", settingsRoutes);
 
 app.notFound((c) => c.json({ error: "not_found" }, 404));
 

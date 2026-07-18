@@ -11,7 +11,7 @@ interface AccessAppResult { id: string }
 interface AccessCaResult { public_key: string }
 interface DnsRecordResult { id: string }
 
-function configured(env: Env): boolean {
+export function configuredRemoteAccess(env: Env): boolean {
   return Boolean(env.CF_API_TOKEN && env.CF_ACCOUNT_ID && env.CF_ZONE_ID && env.CF_ZONE_NAME);
 }
 
@@ -37,22 +37,53 @@ async function cf<T>(env: Env, path: string, init: RequestInit = {}): Promise<T>
   return body.result;
 }
 
-function allowedEmails(env: Env): string[] {
-  return (env.CF_ACCESS_ALLOWED_EMAILS || "").split(",").map((s) => s.trim()).filter(Boolean);
+const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+export function normalizeAccessEmails(value: unknown): string[] {
+  const raw = Array.isArray(value)
+    ? value
+    : typeof value === "string" ? value.split(/[\n,]/) : [];
+  return [...new Set(raw
+    .filter((email): email is string => typeof email === "string")
+    .map((email) => email.trim().toLowerCase())
+    .filter((email) => EMAIL.test(email)))];
 }
 
-export function allowedSshUsers(env: Env): string[] {
-  return [...new Set(allowedEmails(env)
+export async function getAllowedAccessEmails(env: Env): Promise<string[]> {
+  const row = await env.DB.prepare("SELECT value FROM system_settings WHERE key = 'ssh_access_allowed_emails'")
+    .first<{ value: string }>();
+  if (row?.value) {
+    try {
+      const stored = normalizeAccessEmails(JSON.parse(row.value));
+      if (stored.length) return stored;
+    } catch {
+      // Treat malformed stored data as unset; provisioning will request an
+      // administrator to save a valid list in System Settings.
+    }
+  }
+  return [];
+}
+
+export async function getSshAccessConfigVersion(env: Env): Promise<number> {
+  const row = await env.DB.prepare("SELECT value FROM system_settings WHERE key = 'ssh_access_config_version'")
+    .first<{ value: string }>();
+  const version = Number(row?.value ?? "0");
+  return Number.isInteger(version) && version >= 0 ? version : 0;
+}
+
+export async function allowedSshUsers(env: Env): Promise<string[]> {
+  return [...new Set((await getAllowedAccessEmails(env))
     .map((email) => email.split("@", 1)[0].toLowerCase())
     .filter((name) => /^[a-z_][a-z0-9_-]{0,31}$/.test(name)))];
 }
 
 export async function provisionRemoteAccess(env: Env, device: { uuid: string; name: string }): Promise<{ ok: boolean; error?: string }> {
-  if (!configured(env)) return { ok: false, error: "remote_access_not_configured" };
-  const emails = allowedEmails(env);
-  const sshUsers = allowedSshUsers(env);
+  if (!configuredRemoteAccess(env)) return { ok: false, error: "remote_access_not_configured" };
+  const emails = await getAllowedAccessEmails(env);
+  const accessConfigVersion = await getSshAccessConfigVersion(env);
+  const sshUsers = await allowedSshUsers(env);
   if (!emails.length || !sshUsers.length) {
-    return { ok: false, error: "CF_ACCESS_ALLOWED_EMAILS must contain at least one valid Linux username prefix" };
+    return { ok: false, error: "SSH Access must contain at least one valid email with a Linux-safe username prefix" };
   }
   const hostname = hostnameFor(env, device.uuid);
   // Cloudflare may retain a deleted Tunnel name briefly. Keep the device UUID
@@ -105,31 +136,31 @@ export async function provisionRemoteAccess(env: Env, device: { uuid: string; na
       body: "{}",
     });
     await env.DB.prepare(
-      `INSERT INTO device_remote_access (device_id, tunnel_id, access_app_id, hostname, status, ssh_ca_public_key, provisioning_version)
-       VALUES (?, ?, ?, ?, 'inactive', ?, 3)`,
-    ).bind(device.uuid, tunnel.id, app.id, hostname, ca.public_key).run();
+      `INSERT INTO device_remote_access (device_id, tunnel_id, access_app_id, hostname, status, ssh_ca_public_key, provisioning_version, access_config_version)
+       VALUES (?, ?, ?, ?, 'inactive', ?, 3, ?)`,
+    ).bind(device.uuid, tunnel.id, app.id, hostname, ca.public_key, accessConfigVersion).run();
     return { ok: true };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     console.error(JSON.stringify({ event: "remote_access_provision_failed", device_id: device.uuid, error: message }));
     if (tunnel) {
       await env.DB.prepare(
-        `INSERT INTO device_remote_access (device_id, tunnel_id, access_app_id, hostname, status, last_error, provisioning_version)
-         VALUES (?, ?, ?, ?, 'error', ?, 3) ON CONFLICT(device_id) DO UPDATE SET status='error', last_error=excluded.last_error, provisioning_version=excluded.provisioning_version, updated_at=datetime('now')`,
-      ).bind(device.uuid, tunnel.id, app?.id ?? null, hostname, message).run();
+        `INSERT INTO device_remote_access (device_id, tunnel_id, access_app_id, hostname, status, last_error, provisioning_version, access_config_version)
+         VALUES (?, ?, ?, ?, 'error', ?, 3, ?) ON CONFLICT(device_id) DO UPDATE SET status='error', last_error=excluded.last_error, provisioning_version=excluded.provisioning_version, access_config_version=excluded.access_config_version, updated_at=datetime('now')`,
+      ).bind(device.uuid, tunnel.id, app?.id ?? null, hostname, message, accessConfigVersion).run();
     }
     return { ok: false, error: message };
   }
 }
 
 export async function getTunnelStatus(env: Env, tunnelId: string): Promise<string | null> {
-  if (!configured(env)) return null;
+  if (!configuredRemoteAccess(env)) return null;
   const tunnel = await cf<TunnelResult>(env, `/accounts/${env.CF_ACCOUNT_ID}/cfd_tunnel/${tunnelId}`);
   return tunnel.status || "inactive";
 }
 
 export async function createTunnelToken(env: Env, tunnelId: string): Promise<string | null> {
-  if (!configured(env)) return null;
+  if (!configuredRemoteAccess(env)) return null;
   // This is the connector token consumed by `cloudflared service install`.
   // The /management endpoint returns a different token for management APIs.
   return cf<string>(env, `/accounts/${env.CF_ACCOUNT_ID}/cfd_tunnel/${tunnelId}/token`);
@@ -139,7 +170,7 @@ export async function removeRemoteAccess(
   env: Env,
   access: { tunnel_id: string; access_app_id: string | null; hostname: string },
 ): Promise<void> {
-  if (!configured(env)) return;
+  if (!configuredRemoteAccess(env)) return;
   try {
     if (access.access_app_id) {
       await cf(env, `/accounts/${env.CF_ACCOUNT_ID}/access/apps/${access.access_app_id}`, { method: "DELETE" });
@@ -158,4 +189,4 @@ export async function removeRemoteAccess(
   }
 }
 
-export function remoteAccessConfigured(env: Env): boolean { return configured(env); }
+export function remoteAccessConfigured(env: Env): boolean { return configuredRemoteAccess(env); }

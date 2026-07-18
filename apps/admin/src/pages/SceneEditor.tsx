@@ -6,8 +6,31 @@ import { useFetch } from "../hooks";
 import { canWrite, useAuth } from "../auth";
 import { PageHeader } from "../components/ui";
 import {
+  IconCalendar,
+  IconCheck,
+  IconClock,
+  IconCompass,
+  IconCopy,
+  IconEye,
+  IconEyeOff,
+  IconGlobe,
+  IconImage,
+  IconLayers,
+  IconList,
+  IconLock,
+  IconMonitor,
+  IconRepeat,
+  IconSceneStack,
+  IconTrash,
+  IconType,
+  IconUnlock,
+  IconVideo,
+} from "../components/icons";
+import {
   alignLabels,
+  clockDateFormatLabels,
   clockFormatLabels,
+  clockLocaleLabels,
   directionArrowGlyphs,
   directionArrowLabels,
   label,
@@ -19,6 +42,7 @@ import {
 } from "../labels";
 import type {
   ClockWidgetConfig,
+  CarouselWidgetConfig,
   DirectionArrow,
   DirectionWidgetConfig,
   ImageWidgetConfig,
@@ -61,24 +85,28 @@ interface Guide {
 }
 
 const WIDGET_KINDS: WidgetKind[] = [
-  "image",
-  "video",
+  "carousel",
   "web",
   "text",
-  "ticker",
   "direction",
   "clock",
 ];
 
-const KIND_ICONS: Record<WidgetKind, string> = {
-  image: "🖼️",
-  video: "🎬",
-  web: "🌐",
-  text: "🔤",
-  ticker: "📰",
-  direction: "🧭",
-  clock: "🕒",
+const KIND_ICONS: Record<string, React.ComponentType<{ className?: string }>> = {
+  carousel: IconRepeat,
+  web: IconGlobe,
+  text: IconType,
+  direction: IconCompass,
+  clock: IconClock,
 };
+
+const WIDGET_BUTTON_ICONS = {
+  carousel: IconSceneStack,
+  web: IconMonitor,
+  text: IconList,
+  direction: IconLayers,
+  clock: IconCalendar,
+} as const;
 
 const PRESETS: { label: string; w: number; h: number }[] = [
   { label: "1920×1080 (橫)", w: 1920, h: 1080 },
@@ -108,6 +136,8 @@ function defaultConfig(kind: WidgetKind): WidgetConfig {
       return { fit: "contain" } as ImageWidgetConfig;
     case "video":
       return { fit: "cover", muted: true, loop: true } as VideoWidgetConfig;
+    case "carousel":
+      return { items: [], loop: true } as CarouselWidgetConfig;
     case "web":
       return { url: "", mode: "embed", refresh_sec: 0 } as WebWidgetConfig;
     case "text":
@@ -141,6 +171,9 @@ function defaultConfig(kind: WidgetKind): WidgetConfig {
       return {
         format: "24h",
         show_date: true,
+        show_lunar: false,
+        locale: "zh-TW",
+        date_format: "numeric",
         timezone: "",
         color: "#ffffff",
         font_size: 96,
@@ -152,6 +185,7 @@ function defaultSize(kind: WidgetKind, W: number, H: number): { w: number; h: nu
   switch (kind) {
     case "image":
     case "video":
+    case "carousel":
       return { w: Math.round(W * 0.35), h: Math.round(H * 0.35) };
     case "web":
       return { w: Math.round(W * 0.4), h: Math.round(H * 0.5) };
@@ -185,33 +219,37 @@ function tickerGlyph(dir: TickerWidgetConfig["direction"]): string {
   }
 }
 
-function formatClock(cfg: ClockWidgetConfig, now: Date): { time: string; date: string } {
+function formatClock(cfg: ClockWidgetConfig, now: Date): { time: string; date: string; lunar: string } {
+  const locale = cfg.locale ?? "zh-TW";
   const timeOpts: Intl.DateTimeFormatOptions = {
     hour: "2-digit",
     minute: "2-digit",
     second: "2-digit",
     hour12: cfg.format === "12h",
   };
-  const dateOpts: Intl.DateTimeFormatOptions = {
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-    weekday: "short",
-  };
+  const dateOpts: Intl.DateTimeFormatOptions = cfg.date_format === "short"
+    ? { year: "numeric", month: "numeric", day: "numeric" }
+    : cfg.date_format === "long"
+      ? { year: "numeric", month: "long", day: "numeric", weekday: "long" }
+      : { year: "numeric", month: "2-digit", day: "2-digit", weekday: "short" };
+  const lunarOpts: Intl.DateTimeFormatOptions = { month: "long", day: "numeric", weekday: "short" };
   if (cfg.timezone) {
     timeOpts.timeZone = cfg.timezone;
     dateOpts.timeZone = cfg.timezone;
+    lunarOpts.timeZone = cfg.timezone;
   }
   try {
     return {
-      time: new Intl.DateTimeFormat("zh-TW", timeOpts).format(now),
-      date: new Intl.DateTimeFormat("zh-TW", dateOpts).format(now),
+      time: new Intl.DateTimeFormat(locale, timeOpts).format(now),
+      date: new Intl.DateTimeFormat(locale, dateOpts).format(now),
+      lunar: new Intl.DateTimeFormat(`${locale}-u-ca-chinese`, lunarOpts).format(now),
     };
   } catch {
     // Invalid timezone — fall back to device local time.
     return {
-      time: new Intl.DateTimeFormat("zh-TW", { ...timeOpts, timeZone: undefined }).format(now),
-      date: new Intl.DateTimeFormat("zh-TW", { ...dateOpts, timeZone: undefined }).format(now),
+      time: new Intl.DateTimeFormat(locale, { ...timeOpts, timeZone: undefined }).format(now),
+      date: new Intl.DateTimeFormat(locale, { ...dateOpts, timeZone: undefined }).format(now),
+      lunar: new Intl.DateTimeFormat(`${locale}-u-ca-chinese`, { ...lunarOpts, timeZone: undefined }).format(now),
     };
   }
 }
@@ -695,7 +733,7 @@ export default function SceneEditor() {
         </Link>
         <span className="text-slate-300">/</span>
         <input
-          className="input max-w-xs !py-1.5 text-base font-semibold"
+          className="input w-full max-w-xs !py-1.5 text-base font-semibold sm:w-auto"
           value={name}
           disabled={!writable}
           onChange={(e) => setName(e.target.value)}
@@ -710,7 +748,7 @@ export default function SceneEditor() {
           {label(sceneStatusLabels, status)}
           {status === "published" && publishedVersion != null && ` · v${publishedVersion}`}
         </span>
-        {flash && <span className="text-sm font-medium text-green-600">{flash} ✓</span>}
+        {flash && <span className="inline-flex items-center gap-1 text-sm font-medium text-green-600"><IconCheck className="h-4 w-4" />{flash}</span>}
         {writable && (
           <div className="ml-auto flex flex-wrap items-center gap-2">
             <button className="btn-ghost" onClick={toggleVersions}>
@@ -728,7 +766,7 @@ export default function SceneEditor() {
 
       {showVersions && (
         <div className="card space-y-2">
-          <div className="flex items-center justify-between">
+          <div className="flex flex-wrap items-center justify-between gap-2">
             <h2 className="card-title">版本紀錄</h2>
             <button className="btn-ghost btn-sm" onClick={() => void loadVersions()}>
               重新整理
@@ -742,7 +780,7 @@ export default function SceneEditor() {
             {(versions ?? []).map((v) => (
               <div
                 key={v.version}
-                className="flex items-center justify-between rounded-lg border border-slate-100 px-3 py-2 text-sm dark:border-dark-border"
+                className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-slate-100 px-3 py-2 text-sm dark:border-dark-border"
               >
                 <div>
                   <span className="font-medium">v{v.version}</span>
@@ -770,17 +808,20 @@ export default function SceneEditor() {
       {writable && (
         <div className="card flex flex-wrap items-center gap-2">
           <span className="text-xs font-medium text-slate-500 dark:text-dark-muted">新增元件:</span>
-          {WIDGET_KINDS.map((k) => (
-            <button
-              key={k}
-              className="btn-ghost btn-sm"
-              onClick={() => addWidget(k)}
-              title={`新增${label(widgetKindLabels, k)}`}
-            >
-              <span className="mr-1">{KIND_ICONS[k]}</span>
-              {label(widgetKindLabels, k)}
-            </button>
-          ))}
+          {WIDGET_KINDS.map((k) => {
+            const Icon = WIDGET_BUTTON_ICONS[k as keyof typeof WIDGET_BUTTON_ICONS];
+            return (
+              <button
+                key={k}
+                className="btn-ghost btn-sm"
+                onClick={() => addWidget(k)}
+                title={`新增${label(widgetKindLabels, k)}`}
+              >
+                <Icon className="mr-1 h-4 w-4" />
+                {label(widgetKindLabels, k)}
+              </button>
+            );
+          })}
         </div>
       )}
 
@@ -950,9 +991,13 @@ export default function SceneEditor() {
           {/* selected widget config */}
           {selected ? (
             <div className="card space-y-3">
-              <div className="flex items-center justify-between">
+              <div className="flex flex-wrap items-center justify-between gap-2">
                 <h2 className="card-title">
-                  {KIND_ICONS[selected.kind]} {label(widgetKindLabels, selected.kind)}
+                  {(() => {
+                    const Icon = KIND_ICONS[selected.kind];
+                    return Icon ? <Icon className="mr-1 inline-block h-4 w-4 align-text-bottom" /> : null;
+                  })()}
+                  {label(widgetKindLabels, selected.kind)}
                 </h2>
                 {writable && (
                   <div className="flex gap-1.5">
@@ -968,7 +1013,7 @@ export default function SceneEditor() {
                       title="刪除元件"
                       onClick={() => removeWidget(selected.uid)}
                     >
-                      ✕
+                      <IconTrash className="h-4 w-4" />
                     </button>
                   </div>
                 )}
@@ -1015,13 +1060,15 @@ export default function SceneEditor() {
                     className="btn-ghost btn-sm"
                     onClick={() => patchWidget(selected.uid, { locked: !selected.locked })}
                   >
-                    {selected.locked ? "🔒 解鎖" : "🔓 鎖定"}
+                    {selected.locked ? <IconUnlock className="h-4 w-4" /> : <IconLock className="h-4 w-4" />}
+                    <span>{selected.locked ? "解鎖" : "鎖定"}</span>
                   </button>
                   <button
                     className="btn-ghost btn-sm"
                     onClick={() => patchWidget(selected.uid, { visible: !selected.visible })}
                   >
-                    {selected.visible ? "👁 隱藏" : "🚫 顯示"}
+                    {selected.visible ? <IconEyeOff className="h-4 w-4" /> : <IconEye className="h-4 w-4" />}
+                    <span>{selected.visible ? "隱藏" : "顯示"}</span>
                   </button>
                 </div>
               )}
@@ -1057,7 +1104,10 @@ export default function SceneEditor() {
                     className="flex min-w-0 flex-1 items-center gap-2 text-left"
                     onClick={() => setSelectedUid(w.uid)}
                   >
-                    <span>{KIND_ICONS[w.kind]}</span>
+                    {(() => {
+                      const Icon = KIND_ICONS[w.kind];
+                      return Icon ? <Icon className="h-4 w-4 shrink-0" /> : null;
+                    })()}
                     <span className="truncate">{label(widgetKindLabels, w.kind)}</span>
                   </button>
                   {writable && (
@@ -1067,14 +1117,14 @@ export default function SceneEditor() {
                         title={w.visible ? "隱藏" : "顯示"}
                         onClick={() => patchWidget(w.uid, { visible: !w.visible })}
                       >
-                        {w.visible ? "👁" : "🚫"}
+                        {w.visible ? <IconEyeOff className="h-4 w-4" /> : <IconEye className="h-4 w-4" />}
                       </button>
                       <button
                         className="text-slate-400 hover:text-slate-700 dark:hover:text-dark-text"
                         title={w.locked ? "解鎖" : "鎖定"}
                         onClick={() => patchWidget(w.uid, { locked: !w.locked })}
                       >
-                        {w.locked ? "🔒" : "🔓"}
+                        {w.locked ? <IconUnlock className="h-4 w-4" /> : <IconLock className="h-4 w-4" />}
                       </button>
                     </>
                   )}
@@ -1144,6 +1194,11 @@ function computeWarnings(widgets: EditorWidget[], W: number, H: number): string[
       if (!cfg.media_id && !cfg.url) {
         out.push(`元件「${nameOf(w, list)}」尚未選擇素材`);
       }
+    }
+    if (w.kind === "carousel") {
+      const cfg = w.config as CarouselWidgetConfig;
+      if (!cfg.items?.length) out.push(`輪播元件「${nameOf(w, list)}」至少需要一個項目`);
+      if ((cfg.items ?? []).some((item) => !item.media_id && !item.url)) out.push(`輪播元件「${nameOf(w, list)}」有未設定素材的項目`);
     }
     if (w.kind === "web") {
       const cfg = w.config as WebWidgetConfig;
@@ -1239,7 +1294,7 @@ function WidgetView({
       return src ? (
         <img src={src} alt="" style={{ ...box, objectFit: cfg.fit ?? "contain" }} draggable={false} />
       ) : (
-        <Placeholder icon="🖼️" text="未選擇圖片" />
+        <Placeholder icon={<IconImage className="h-8 w-8" />} text="未選擇圖片" />
       );
     }
     case "video": {
@@ -1247,18 +1302,22 @@ function WidgetView({
       const m = cfg.media_id ? media.find((x) => x.id === cfg.media_id) : undefined;
       return (
         <Placeholder
-          icon="🎬"
+          icon={<IconVideo className="h-8 w-8" />}
           text={m?.filename ?? cfg.url ?? "未選擇影片"}
           sub={`影片 · ${label(objectFitLabels, cfg.fit ?? "cover")}`}
           dark
         />
       );
     }
+    case "carousel": {
+      const cfg = w.config as CarouselWidgetConfig;
+      return <Placeholder icon={<IconRepeat className="h-8 w-8" />} text={cfg.items?.length ? `輪播 ${cfg.items.length} 個項目` : "尚未加入輪播項目"} dark />;
+    }
     case "web": {
       const cfg = w.config as WebWidgetConfig;
       return (
         <Placeholder
-          icon="🌐"
+          icon={<IconGlobe className="h-8 w-8" />}
           text={cfg.url || "未設定網址"}
           sub={label(webModeLabels, cfg.mode ?? "embed")}
           dark
@@ -1341,7 +1400,7 @@ function WidgetView({
     }
     case "clock": {
       const cfg = w.config as ClockWidgetConfig;
-      const { time, date } = formatClock(cfg, now);
+      const { time, date, lunar } = formatClock(cfg, now);
       return (
         <div
           style={{
@@ -1363,6 +1422,11 @@ function WidgetView({
               {date}
             </div>
           )}
+          {cfg.show_lunar && (
+            <div style={{ fontSize: Math.max(4, (cfg.font_size ?? 64) * scale * 0.34), opacity: 0.75 }}>
+              {lunar}
+            </div>
+          )}
         </div>
       );
     }
@@ -1375,7 +1439,7 @@ function Placeholder({
   sub,
   dark,
 }: {
-  icon: string;
+  icon: React.ReactNode;
   text: string;
   sub?: string;
   dark?: boolean;
@@ -1441,6 +1505,8 @@ function WidgetConfigForm({
           onChange={onChange}
         />
       );
+    case "carousel":
+      return <CarouselForm cfg={widget.config as CarouselWidgetConfig} media={media} disabled={disabled} onChange={onChange} />;
     case "web":
       return <WebForm cfg={widget.config as WebWidgetConfig} disabled={disabled} onChange={onChange} />;
     case "text":
@@ -1468,6 +1534,43 @@ const ALIGN_OPTS: [string, string][] = Object.entries(alignLabels);
 const TICKER_DIR_OPTS: [string, string][] = Object.entries(tickerDirectionLabels);
 const ARROW_OPTS: [string, string][] = Object.entries(directionArrowLabels);
 const CLOCK_FMT_OPTS: [string, string][] = Object.entries(clockFormatLabels);
+const CLOCK_LOCALE_OPTS: [string, string][] = Object.entries(clockLocaleLabels);
+const CLOCK_DATE_FORMAT_OPTS: [string, string][] = Object.entries(clockDateFormatLabels);
+
+function CarouselForm({
+  cfg, media, disabled, onChange,
+}: {
+  cfg: CarouselWidgetConfig;
+  media: MediaRow[];
+  disabled: boolean;
+  onChange: (c: CarouselWidgetConfig) => void;
+}) {
+  const items = cfg.items ?? [];
+  const update = (index: number, patch: Record<string, unknown>) =>
+    onChange({ ...cfg, items: items.map((item, i) => i === index ? { ...item, ...patch } : item) });
+  const add = (kind: "image" | "video") => onChange({ ...cfg, items: [...items, { kind, dwell_sec: 10, fit: "contain", muted: true, loop: true }] });
+  return (
+    <div className="space-y-3">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <span className="text-sm font-medium">輪播項目</span>
+        <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={cfg.loop !== false} disabled={disabled} onChange={(e) => onChange({ ...cfg, loop: e.target.checked })} />循環</label>
+      </div>
+      {items.map((item, index) => (
+        <div key={index} className="rounded border border-slate-200 p-2 space-y-2">
+          <div className="flex gap-2 items-center"><span className="text-sm flex-1">{index + 1}. {item.kind === "image" ? "圖片" : "影片"}</span><button type="button" className="btn-secondary text-xs" disabled={disabled} onClick={() => onChange({ ...cfg, items: items.filter((_, i) => i !== index) })}>移除</button></div>
+          <>
+            <MediaPicker media={media} type={item.kind} value={item.media_id} disabled={disabled} onChange={(id) => update(index, { media_id: id })} />
+            <TextField label="外部 URL（未選媒體時使用）" value={item.url ?? ""} disabled={disabled} placeholder="https://" onChange={(url) => update(index, { url, media_id: undefined })} />
+            <SelectField label="顯示方式" value={item.fit ?? "contain"} options={FIT_OPTS} disabled={disabled} onChange={(fit) => update(index, { fit })} />
+            {item.kind === "video" && <div className="flex gap-4 text-sm"><label className="flex items-center gap-2"><input type="checkbox" checked={item.muted !== false} disabled={disabled} onChange={(e) => update(index, { muted: e.target.checked })} />靜音</label><label className="flex items-center gap-2"><input type="checkbox" checked={item.loop !== false} disabled={disabled || item.play_until_end === true} onChange={(e) => update(index, { loop: e.target.checked })} />影片循環</label><label className="flex items-center gap-2"><input type="checkbox" checked={item.play_until_end === true} disabled={disabled} onChange={(e) => update(index, { play_until_end: e.target.checked, ...(e.target.checked ? { loop: false } : {}) })} />播放至結束</label></div>}
+          </>
+          <TextField label="停留秒數" value={String(item.dwell_sec ?? 10)} disabled={disabled} onChange={(v) => update(index, { dwell_sec: Math.max(1, Number(v) || 1) })} />
+        </div>
+      ))}
+      <div className="flex gap-2"><button type="button" className="btn-secondary" disabled={disabled} onClick={() => add("image")}>＋圖片</button><button type="button" className="btn-secondary" disabled={disabled} onClick={() => add("video")}>＋影片</button></div>
+    </div>
+  );
+}
 
 function ImageForm({
   cfg,
@@ -1624,6 +1727,22 @@ function TextForm({
           onChange={(e) => set({ text: e.target.value })}
         />
       </div>
+      <SelectField
+        label="顯示模式"
+        value={cfg.behavior ?? "static"}
+        options={[["static", "靜態文字"], ["ticker", "跑馬燈"]]}
+        disabled={disabled}
+        onChange={(v) => set({ behavior: v as "static" | "ticker" })}
+      />
+      {(cfg.behavior ?? "static") === "ticker" && (
+        <>
+          <TextField label="動態文字來源 URL（選填）" value={cfg.source_url ?? ""} disabled={disabled} placeholder="https://" onChange={(v) => set({ source_url: v || undefined })} />
+          <div className="grid grid-cols-2 gap-2">
+            <SelectField label="方向" value={cfg.direction ?? "left"} options={TICKER_DIR_OPTS} disabled={disabled} onChange={(v) => set({ direction: v as TextWidgetConfig["direction"] })} />
+            <NumberField label="速度 (px/秒)" value={cfg.speed ?? 80} min={1} disabled={disabled} onChange={(v) => set({ speed: v })} />
+          </div>
+        </>
+      )}
       <div className="grid grid-cols-2 gap-2">
         <NumberField
           label="字級 (px)"
@@ -1778,7 +1897,7 @@ function DirectionForm({
                   className="btn-danger btn-sm !px-2"
                   onClick={() => setEntries(entries.filter((_, j) => j !== i))}
                 >
-                  ✕
+                  <IconTrash className="h-4 w-4" />
                 </button>
               )}
             </div>
@@ -1835,6 +1954,20 @@ function ClockForm({
         disabled={disabled}
         onChange={(v) => set({ format: v as ClockWidgetConfig["format"] })}
       />
+      <SelectField
+        label="語言"
+        value={cfg.locale ?? "zh-TW"}
+        options={CLOCK_LOCALE_OPTS}
+        disabled={disabled}
+        onChange={(v) => set({ locale: v as ClockWidgetConfig["locale"] })}
+      />
+      <SelectField
+        label="日期格式"
+        value={cfg.date_format ?? "numeric"}
+        options={CLOCK_DATE_FORMAT_OPTS}
+        disabled={disabled}
+        onChange={(v) => set({ date_format: v as ClockWidgetConfig["date_format"] })}
+      />
       <TextField
         label="時區 (IANA,留空為裝置本地)"
         value={cfg.timezone ?? ""}
@@ -1847,6 +1980,12 @@ function ClockForm({
         checked={cfg.show_date ?? false}
         disabled={disabled}
         onChange={(v) => set({ show_date: v })}
+      />
+      <CheckboxField
+        label="顯示農曆"
+        checked={cfg.show_lunar ?? false}
+        disabled={disabled}
+        onChange={(v) => set({ show_lunar: v })}
       />
       <NumberField
         label="字級 (px)"

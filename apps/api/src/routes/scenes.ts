@@ -8,11 +8,9 @@ const app = new Hono<{ Bindings: Env; Variables: Variables }>();
 app.use("*", requireAuth);
 
 const WIDGET_KINDS: WidgetKind[] = [
-  "image",
-  "video",
+  "carousel",
   "web",
   "text",
-  "ticker",
   "direction",
   "clock",
 ];
@@ -58,10 +56,33 @@ function validateWidget(widget: {
   if (c.refresh_sec !== undefined && !isIntIn(c.refresh_sec, 0, 86_400)) return "invalid_refresh_sec";
   if (c.font_size !== undefined && !isIntIn(c.font_size, 1, 4_096)) return "invalid_font_size";
   if (c.text !== undefined && (typeof c.text !== "string" || c.text.length > 10_000)) return "invalid_text";
+  if (widget.kind === "carousel") {
+    if (!Array.isArray(c.items) || c.items.length === 0 || c.items.length > 100) return "invalid_carousel_items";
+    if (c.loop !== undefined && typeof c.loop !== "boolean") return "invalid_carousel_loop";
+    for (const item of c.items) {
+      if (!item || typeof item !== "object" || Array.isArray(item)) return "invalid_carousel_item";
+      const entry = item as Record<string, unknown>;
+      if (!['image', 'video'].includes(String(entry.kind))) return "invalid_carousel_kind";
+      if (!isIntIn(entry.dwell_sec, 1, 86_400)) return "invalid_carousel_dwell";
+      if (entry.media_id !== undefined && !isIntIn(entry.media_id, 1, Number.MAX_SAFE_INTEGER)) return "invalid_carousel_media_id";
+      if (entry.url !== undefined && !isHttpUrl(entry.url)) return "invalid_carousel_url";
+      if (entry.media_id === undefined && entry.url === undefined) return "missing_carousel_source";
+      if (entry.fit !== undefined && !["contain", "cover", "fill"].includes(String(entry.fit))) return "invalid_carousel_fit";
+      if (entry.muted !== undefined && typeof entry.muted !== "boolean") return "invalid_carousel_muted";
+      if (entry.loop !== undefined && typeof entry.loop !== "boolean") return "invalid_carousel_item_loop";
+      if (entry.play_until_end !== undefined && typeof entry.play_until_end !== "boolean") return "invalid_carousel_play_until_end";
+      if (entry.mode !== undefined || entry.refresh_sec !== undefined) return "carousel_does_not_support_web";
+    }
+  }
   if (widget.kind === "web" && c.mode !== undefined && !["embed", "proxy", "open"].includes(String(c.mode))) return "invalid_web_mode";
-  if (widget.kind === "ticker" && c.direction !== undefined && !["left", "right", "up", "down"].includes(String(c.direction))) return "invalid_ticker_direction";
+  if (widget.kind === "text" && c.behavior !== undefined && !["static", "ticker"].includes(String(c.behavior))) return "invalid_text_behavior";
+  if (widget.kind === "text" && c.direction !== undefined && !["left", "right", "up", "down"].includes(String(c.direction))) return "invalid_text_direction";
   if (widget.kind === "direction" && c.entries !== undefined && !Array.isArray(c.entries)) return "invalid_direction_entries";
   if (widget.kind === "clock" && c.format !== undefined && !["12h", "24h"].includes(String(c.format))) return "invalid_clock_format";
+  if (widget.kind === "clock" && c.show_date !== undefined && typeof c.show_date !== "boolean") return "invalid_clock_show_date";
+  if (widget.kind === "clock" && c.show_lunar !== undefined && typeof c.show_lunar !== "boolean") return "invalid_clock_show_lunar";
+  if (widget.kind === "clock" && c.locale !== undefined && !["zh-TW", "zh-CN", "en-US", "ja-JP", "ko-KR"].includes(String(c.locale))) return "invalid_clock_locale";
+  if (widget.kind === "clock" && c.date_format !== undefined && !["numeric", "short", "long"].includes(String(c.date_format))) return "invalid_clock_date_format";
   return null;
 }
 

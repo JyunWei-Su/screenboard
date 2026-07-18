@@ -1,7 +1,5 @@
 import type { Env } from "../types";
 import type {
-  PlaylistItem,
-  ResolvedPlaylist,
   ResolvedScene,
   ResolvedSceneWidget,
   ResolvedScenePlaylist,
@@ -35,8 +33,7 @@ interface ScheduleRow extends ScheduleWindow {
 
 // Full schedule row including the new multi-source targeting columns.
 interface ScheduleSourceRow extends ScheduleWindow {
-  source_type: string; // playlist | scene | scene_playlist
-  playlist_id: number | null;
+  source_type: string; // scene | scene_playlist
   scene_id: number | null;
   scene_playlist_id: number | null;
   target_type: string;
@@ -48,8 +45,7 @@ interface ScheduleSourceRow extends ScheduleWindow {
 interface TargetDeviceRow {
   uuid: string;
   group_id: number | null;
-  source_type: string; // playlist | scene | scene_playlist
-  playlist_id: number | null;
+  source_type: string; // scene | scene_playlist
   scene_id: number | null;
   scene_playlist_id: number | null;
 }
@@ -128,52 +124,6 @@ async function shortHash(input: string): Promise<string> {
     .slice(0, 8)
     .map((b) => b.toString(16).padStart(2, "0"))
     .join("");
-}
-
-// Build a fully resolved playlist (absolute media URLs) for a device to play.
-export async function buildResolvedPlaylist(
-  env: Env,
-  playlistId: number,
-): Promise<ResolvedPlaylist | null> {
-  const pl = await env.DB.prepare(
-    "SELECT id, name, loop FROM playlists WHERE id = ?",
-  )
-    .bind(playlistId)
-    .first<{ id: number; name: string; loop: number }>();
-  if (!pl) return null;
-
-  const rows = await env.DB.prepare(
-    "SELECT id, type, url, media_id, duration_sec, order_index FROM playlist_items WHERE playlist_id = ? ORDER BY order_index",
-  )
-    .bind(playlistId)
-    .all<{
-      id: number;
-      type: string;
-      url: string | null;
-      media_id: number | null;
-      duration_sec: number;
-      order_index: number;
-    }>();
-
-  const base = env.PUBLIC_API_URL.replace(/\/$/, "");
-  const items: PlaylistItem[] = rows.results.map((r) => ({
-    id: r.id,
-    type: r.type as PlaylistItem["type"],
-    source: r.media_id
-      ? `${base}/api/content/media/${r.media_id}`
-      : (r.url ?? ""),
-    duration_sec: r.duration_sec,
-    order_index: r.order_index,
-  }));
-
-  const revision = await shortHash(JSON.stringify(items) + pl.loop);
-  return {
-    playlist_id: pl.id,
-    name: pl.name,
-    loop: !!pl.loop,
-    items,
-    revision,
-  };
 }
 
 // ---- Scenes ----
@@ -326,6 +276,12 @@ function resolveSnapshot(
       const config = { ...(w.config as object) } as WidgetConfig & { source?: string };
       const mediaId = (w.config as { media_id?: number }).media_id;
       if (mediaId) config.source = mediaUrl(base, mediaId);
+      if (w.kind === "carousel" && Array.isArray((config as { items?: unknown[] }).items)) {
+        (config as { items: Array<Record<string, unknown>> }).items = (config as { items: Array<Record<string, unknown>> }).items.map((item) => ({
+          ...item,
+          ...(typeof item.media_id === "number" ? { source: mediaUrl(base, item.media_id) } : {}),
+        }));
+      }
       return {
         id: w.id,
         kind: w.kind as WidgetKind,
@@ -436,7 +392,6 @@ export async function resolveTarget(
   let best:
     | {
         source_type: string;
-        playlist_id: number | null;
         scene_id: number | null;
         scene_playlist_id: number | null;
         priority: number;
@@ -457,7 +412,6 @@ export async function resolveTarget(
     ) {
       best = {
         source_type: s.source_type,
-        playlist_id: s.playlist_id,
         scene_id: s.scene_id,
         scene_playlist_id: s.scene_playlist_id,
         priority: s.priority,
@@ -468,7 +422,6 @@ export async function resolveTarget(
 
   const src = best ?? {
     source_type: device.source_type,
-    playlist_id: device.playlist_id,
     scene_id: device.scene_id,
     scene_playlist_id: device.scene_playlist_id,
   };
@@ -489,8 +442,5 @@ export async function resolveTarget(
     return resolved ? { kind: "scene_playlist", scene_playlist: resolved } : { kind: "none" };
   }
 
-  // Default / legacy: playlist source.
-  if (src.playlist_id == null) return { kind: "none" };
-  const playlist = await buildResolvedPlaylist(env, src.playlist_id);
-  return playlist ? { kind: "playlist", playlist } : { kind: "none" };
+  return { kind: "none" };
 }

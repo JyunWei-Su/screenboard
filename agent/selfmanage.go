@@ -15,6 +15,7 @@ const (
 	repairTunnelHelper = "/usr/local/bin/screenboard-repair-tunnel"
 	reinstallHelper    = "/usr/local/bin/screenboard-reinstall"
 	syncTimeHelper     = "/usr/local/bin/screenboard-sync-time"
+	setHostnameHelper  = "/usr/local/bin/screenboard-set-hostname"
 )
 
 // RepairTunnel re-fetches this device's Cloudflare Tunnel token and reinstalls
@@ -60,4 +61,25 @@ func SyncTime() (string, error) {
 		return "", fmt.Errorf("%v: %s", err, detail)
 	}
 	return detail, nil
+}
+
+// SetHostname delegates hostname changes to a root-owned helper. The argument
+// is validated again here and passed as one argv value, never through a shell.
+func SetHostname(hostname string) error {
+	if _, err := exec.LookPath("sudo"); err != nil {
+		return fmt.Errorf("sudo unavailable: %w", err)
+	}
+	if len(hostname) < 1 || len(hostname) > 63 {
+		return fmt.Errorf("invalid hostname")
+	}
+	for i, r := range hostname {
+		if !((r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || (r == '-' && i > 0 && i < len(hostname)-1)) {
+			return fmt.Errorf("invalid hostname")
+		}
+	}
+	out, err := exec.Command("sudo", "-n", setHostnameHelper, hostname).CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("%v: %s", err, strings.TrimSpace(string(out)))
+	}
+	return nil
 }

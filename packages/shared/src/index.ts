@@ -15,7 +15,6 @@ export type OtaStrategy = "all" | "group" | "canary";
 
 export type CommandType =
   | "reload"
-  | "switch_playlist"
   | "switch_scene"
   | "reboot"
   | "shutdown"
@@ -23,6 +22,7 @@ export type CommandType =
   | "take_screenshot"
   | "check_update"
   | "sync_time" // enable/restart the device's managed NTP service
+  | "set_hostname" // set the OS hostname, optionally followed by a reboot
   | "apply_display" // push display settings (zoom/rotate/etc.)
   | "apply_agent_settings" // push reporting/polling/screenshot/OTA intervals
   | "repair_tunnel" // re-provision cloudflared so SSH remote access recovers
@@ -35,7 +35,6 @@ export type EventType =
   | "memory_high"
   | "disk_low"
   | "ota_failed"
-  | "playlist_error"
   | "screenshot_error";
 
 export type EventSeverity = "info" | "warning" | "critical";
@@ -57,7 +56,6 @@ export interface Device extends DeviceInfo {
   name: string;
   group_id: number | null;
   status: DeviceStatus;
-  playlist_id: number | null;
   last_seen_at: string | null;
   registered_at: string;
 }
@@ -105,24 +103,6 @@ export interface RemoteAccessBootstrap {
   enabled: boolean;
   hostname?: string;
   tunnel_token?: string;
-}
-
-// ---- Playlist ----
-
-export interface PlaylistItem {
-  id: number;
-  type: MediaType;
-  source: string; // absolute URL the player can load
-  duration_sec: number;
-  order_index: number;
-}
-
-export interface ResolvedPlaylist {
-  playlist_id: number;
-  name: string;
-  loop: boolean;
-  items: PlaylistItem[];
-  revision: string; // hash for cache comparison
 }
 
 // ---- Commands (over WebSocket) ----
@@ -175,11 +155,12 @@ export interface OtaUpdateResponse {
 // wire contract shared by the Workers API, admin editor, and player. See TODO.md.
 
 export type WidgetKind =
-  | "image"
-  | "video"
+  | "image" // legacy schema value; the API no longer accepts it
+  | "video" // legacy schema value; the API no longer accepts it
+  | "carousel"
   | "web"
   | "text"
-  | "ticker"
+  | "ticker" // legacy schema value; merged into text.behavior="ticker"
   | "direction"
   | "clock";
 
@@ -206,6 +187,26 @@ export interface VideoWidgetConfig {
   loop?: boolean;
 }
 
+/** A rotating media region within a scene; each item has its own dwell time. */
+export interface CarouselItem {
+  kind: "image" | "video";
+  media_id?: number;
+  url?: string;
+  dwell_sec: number;
+  fit?: ObjectFit;
+  muted?: boolean;
+  loop?: boolean;
+  play_until_end?: boolean;
+  mode?: WebSourceMode;
+  refresh_sec?: number;
+  source?: string;
+}
+
+export interface CarouselWidgetConfig {
+  items: CarouselItem[];
+  loop?: boolean;
+}
+
 export interface WebWidgetConfig {
   url: string;
   mode?: WebSourceMode;
@@ -214,6 +215,10 @@ export interface WebWidgetConfig {
 
 export interface TextWidgetConfig {
   text: string;
+  behavior?: "static" | "ticker";
+  source_url?: string;
+  speed?: number;
+  direction?: "left" | "right" | "up" | "down";
   font_size?: number;
   color?: string;
   background?: string;
@@ -256,6 +261,12 @@ export interface DirectionWidgetConfig {
 export interface ClockWidgetConfig {
   format?: "24h" | "12h";
   show_date?: boolean;
+  /** Show the lunar-calendar date below the Gregorian date. */
+  show_lunar?: boolean;
+  /** BCP 47 locale used for all clock text. */
+  locale?: "zh-TW" | "zh-CN" | "en-US" | "ja-JP" | "ko-KR";
+  /** Visual style for the Gregorian date. */
+  date_format?: "numeric" | "short" | "long";
   timezone?: string; // IANA tz; empty = device local
   color?: string;
   background?: string;
@@ -265,6 +276,7 @@ export interface ClockWidgetConfig {
 export type WidgetConfig =
   | ImageWidgetConfig
   | VideoWidgetConfig
+  | CarouselWidgetConfig
   | WebWidgetConfig
   | TextWidgetConfig
   | TickerWidgetConfig
@@ -356,7 +368,6 @@ export interface ResolvedScenePlaylist {
 
 // A device resolves to exactly one of these at any moment.
 export type ResolvedTarget =
-  | { kind: "playlist"; playlist: ResolvedPlaylist }
   | { kind: "scene"; scene: ResolvedScene }
   | { kind: "scene_playlist"; scene_playlist: ResolvedScenePlaylist }
   | { kind: "none" };

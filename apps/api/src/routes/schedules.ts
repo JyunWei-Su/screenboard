@@ -6,12 +6,9 @@ const app = new Hono<{ Bindings: Env; Variables: Variables }>();
 app.use("*", requireAuth);
 
 app.get("/", async (c) => {
-  // LEFT JOINs so schedules of any source_type are listed (a schedule sets
-  // exactly one of playlist_id / scene_id / scene_playlist_id).
   const rows = await c.env.DB.prepare(
-    `SELECT s.*, p.name AS playlist_name, sc.name AS scene_name, spl.name AS scene_playlist_name
+    `SELECT s.*, sc.name AS scene_name, spl.name AS scene_playlist_name
      FROM schedules s
-     LEFT JOIN playlists p ON p.id = s.playlist_id
      LEFT JOIN scenes sc ON sc.id = s.scene_id
      LEFT JOIN scene_playlists spl ON spl.id = s.scene_playlist_id
      ORDER BY s.priority DESC, s.id`,
@@ -19,12 +16,11 @@ app.get("/", async (c) => {
   return c.json(rows.results);
 });
 
-type SourceType = "playlist" | "scene" | "scene_playlist";
+type SourceType = "scene" | "scene_playlist";
 
 app.post("/", requireRole("admin", "operator"), async (c) => {
   const b = await c.req.json<{
     source_type?: SourceType;
-    playlist_id?: number | null;
     scene_id?: number | null;
     scene_playlist_id?: number | null;
     target_type: "device" | "group";
@@ -39,16 +35,11 @@ app.post("/", requireRole("admin", "operator"), async (c) => {
   if (!b.target_type || !b.target_id) {
     return c.json({ error: "missing_fields" }, 400);
   }
-  // Default to legacy playlist targeting so old clients keep working.
-  const sourceType: SourceType = b.source_type ?? "playlist";
-  // Exactly one source column is set per row.
-  let playlistId: number | null = null;
+  const sourceType = b.source_type;
+  if (!sourceType) return c.json({ error: "missing_source_type" }, 400);
   let sceneId: number | null = null;
   let scenePlaylistId: number | null = null;
-  if (sourceType === "playlist") {
-    if (!b.playlist_id) return c.json({ error: "missing_playlist_id" }, 400);
-    playlistId = b.playlist_id;
-  } else if (sourceType === "scene") {
+  if (sourceType === "scene") {
     if (!b.scene_id) return c.json({ error: "missing_scene_id" }, 400);
     sceneId = b.scene_id;
   } else if (sourceType === "scene_playlist") {
@@ -58,12 +49,11 @@ app.post("/", requireRole("admin", "operator"), async (c) => {
     return c.json({ error: "invalid_source_type" }, 400);
   }
   const res = await c.env.DB.prepare(
-    `INSERT INTO schedules (source_type, playlist_id, scene_id, scene_playlist_id, target_type, target_id, date_start, date_end, time_start, time_end, weekdays, priority)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO schedules (source_type, scene_id, scene_playlist_id, target_type, target_id, date_start, date_end, time_start, time_end, weekdays, priority)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   )
     .bind(
       sourceType,
-      playlistId,
       sceneId,
       scenePlaylistId,
       b.target_type,

@@ -6,6 +6,7 @@ import { canWrite, useAuth } from "../auth";
 import { TableCard } from "../components/ui";
 import { assignSourceLabels, commandStatusLabels, label, tunnelStatusLabels } from "../labels";
 import { StatusBadge } from "./Devices";
+import { useToast } from "../toast";
 
 interface Device {
   uuid: string;
@@ -19,20 +20,18 @@ interface Device {
   mac: string;
   resolution: string;
   group_id: number | null;
-  playlist_id: number | null;
   // New scene assignment fields (migration 0008). `source_type` drives which one
   // is active; the API clears the other two when the source type is switched.
-  source_type?: "playlist" | "scene" | "scene_playlist";
+  source_type?: "scene" | "scene_playlist";
   scene_id?: number | null;
   scene_playlist_id?: number | null;
   display: string;
   agent_settings: string;
   last_seen_at: string | null;
   health?: { cpu: number; memory: number; disk: number; uptime: number; ts: string } | null;
-  active_playlist_id: number | null;
 }
 interface ScreenshotRow { id: number; taken_at: string; analysis: string | null; trigger: string }
-interface CommandRow { id: string; type: string; status: string; issued_at: string }
+interface CommandRow { id: string; type: string; status: string; detail?: string | null; issued_at: string }
 interface CommandPage { items: CommandRow[]; page: number; limit: number; total: number; total_pages: number }
 interface NamedRow { id: number; name: string }
 interface AgentSettings {
@@ -53,11 +52,9 @@ interface RemoteAccess {
 const COMMANDS: { type: string; label: string; danger?: boolean }[] = [
   { type: "reload", label: "重新載入" },
   { type: "restart_player", label: "重新啟動播放器" },
-  { type: "switch_playlist", label: "重新同步播放清單" },
   { type: "take_screenshot", label: "截圖" },
   { type: "check_update", label: "立即檢查更新" },
   { type: "sync_time", label: "NTP 對時" },
-  { type: "repair_tunnel", label: "修復 SSH 連線" },
   { type: "reboot", label: "重新開機", danger: true },
   { type: "shutdown", label: "關機", danger: true },
   { type: "reinstall", label: "重新安裝", danger: true },
@@ -70,11 +67,14 @@ const commandTypeLabels: Record<string, string> = Object.fromEntries(
   COMMANDS.map((c) => [c.type, c.label]),
 );
 commandTypeLabels.apply_agent_settings = "套用週期設定";
+commandTypeLabels.set_hostname = "修改主機名稱";
+commandTypeLabels.repair_tunnel = "修復 SSH 連線";
 
 export default function DeviceDetail() {
   const { uuid } = useParams();
   const { user } = useAuth();
   const writable = canWrite(user);
+  const { showToast } = useToast();
   const { data: d, reload } = useFetch<Device>(`/api/devices/${uuid}`);
   const { data: shots, reload: reloadShots } = useFetch<ScreenshotRow[]>(
     `/api/screenshots?device_id=${uuid}&limit=12`,
@@ -84,7 +84,6 @@ export default function DeviceDetail() {
     `/api/devices/${uuid}/commands?page=${commandPage}&limit=20`,
   );
   const { data: groups } = useFetch<NamedRow[]>("/api/groups");
-  const { data: playlists } = useFetch<NamedRow[]>("/api/playlists");
   const { data: scenes } = useFetch<NamedRow[]>("/api/scenes");
   const { data: scenePlaylists } = useFetch<NamedRow[]>("/api/scene-playlists");
   const { data: remoteAccess, reload: reloadRemoteAccess } = useFetch<RemoteAccess>(
@@ -93,10 +92,16 @@ export default function DeviceDetail() {
   const [agentSettings, setAgentSettings] = useState<AgentSettings>(DEFAULT_AGENT_SETTINGS);
   const [selectedScreenshotIds, setSelectedScreenshotIds] = useState<Set<number>>(new Set());
   const [selectedCommandIds, setSelectedCommandIds] = useState<Set<string>>(new Set());
+  const [hostname, setHostname] = useState("");
+  const [actionBusy, setActionBusy] = useState(false);
 
   useEffect(() => {
     if (d) setAgentSettings(safeAgentSettings(d.agent_settings));
   }, [d?.uuid, d?.agent_settings]);
+
+  useEffect(() => {
+    if (d) setHostname(d.hostname);
+  }, [d?.uuid, d?.hostname]);
 
   useEffect(() => {
     setSelectedScreenshotIds((selected) => new Set(
@@ -107,14 +112,50 @@ export default function DeviceDetail() {
   if (!d) return <div className="text-slate-400">載入中…</div>;
   const display = safeParse(d.display);
 
+  async function watchCommand(commandId: string, description: string) {
+    for (let attempt = 0; attempt < 12; attempt++) {
+      await new Promise((resolve) => setTimeout(resolve, 2000));
+      try {
+        const command = await api.get<CommandRow>(`/api/devices/${uuid}/commands/${commandId}`);
+        if (command.status === "acked") {
+          showToast(`${description}已完成${command.detail ? `：${command.detail}` : "。"}`, "success");
+          void reloadCmds();
+          return;
+        }
+        if (command.status === "failed") {
+          showToast(`${description}失敗${command.detail ? `：${command.detail}` : "。"}`, "error");
+          void reloadCmds();
+          return;
+        }
+      } catch {
+        return;
+      }
+    }
+  }
+
   async function runCommand(type: string) {
     if (CONFIRM_COMMANDS.has(type) && !confirm(`要送出「${label(commandTypeLabels, type)}」嗎?`)) return;
-    await api.post(`/api/devices/${uuid}/commands`, { type });
-    setTimeout(reloadCmds, 500);
+    setActionBusy(true);
+    try {
+      const result = await api.post<{ id: string; delivered: boolean }>(`/api/devices/${uuid}/commands`, { type });
+      showToast(result.delivered ? "指令已送達裝置，等待執行結果。" : "指令已排入佇列，裝置連線後會執行。", "info");
+      setTimeout(reloadCmds, 500);
+      setTimeout(reloadCmds, 2500);
+      void watchCommand(result.id, label(commandTypeLabels, type));
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : "送出指令失敗", "error");
+    } finally {
+      setActionBusy(false);
+    }
   }
   async function patch(body: Record<string, unknown>) {
-    await api.patch(`/api/devices/${uuid}`, body);
-    reload();
+    try {
+      await api.patch(`/api/devices/${uuid}`, body);
+      showToast("設定已儲存；需要套用至裝置的設定已送出。", "success");
+      reload();
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : "儲存設定失敗", "error");
+    }
   }
   async function saveAgentSettings() {
     await patch({ agent_settings: agentSettings });
@@ -122,11 +163,36 @@ export default function DeviceDetail() {
   }
   async function provisionRemoteAccess() {
     try {
-      await api.post(`/api/devices/${uuid}/remote-access`);
+      const result = await api.post<{ action: "connector_repair" | "reprovision_and_repair"; repair?: { id: string; delivered?: boolean } }>(`/api/devices/${uuid}/remote-access`);
+      const prefix = result.action === "reprovision_and_repair" ? "SSH 設定已重新佈建，" : "正在修復裝置端 SSH 連線，";
+      showToast(result.repair?.delivered ? `${prefix}等待裝置執行結果。` : `${prefix}裝置連線後會自動套用。`, "info");
       await reloadRemoteAccess();
+      setTimeout(reloadCmds, 500);
+      setTimeout(reloadCmds, 2500);
+      if (result.repair?.id) void watchCommand(result.repair.id, "SSH 修復");
     } catch (error) {
-      alert(error instanceof Error ? error.message : "SSH 佈建失敗");
+      showToast(error instanceof Error ? error.message : "SSH 修復失敗", "error");
       await reloadRemoteAccess();
+    }
+  }
+  async function updateHostname() {
+    const next = hostname.trim();
+    if (!/^[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?$/.test(next)) {
+      showToast("主機名稱須為 1–63 個英數或連字號，且不能以連字號開頭或結尾。", "error");
+      return;
+    }
+    if (!confirm(`要將主機名稱改為「${next}」並重新開機嗎？`)) return;
+    setActionBusy(true);
+    try {
+      const result = await api.post<{ id: string; delivered: boolean }>(`/api/devices/${uuid}/commands`, { type: "set_hostname", payload: { hostname: next, reboot: true } });
+      showToast(result.delivered ? "主機名稱變更已送達裝置，裝置即將重新開機。" : "主機名稱變更已排入佇列，裝置連線後會執行並重新開機。", "info");
+      setTimeout(reloadCmds, 500);
+      setTimeout(reloadCmds, 2500);
+      void watchCommand(result.id, "主機名稱變更");
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : "修改主機名稱失敗", "error");
+    } finally {
+      setActionBusy(false);
     }
   }
   async function deleteScreenshot(id: number) {
@@ -194,7 +260,7 @@ export default function DeviceDetail() {
       <div className="grid gap-6 lg:grid-cols-3">
         <div className="card lg:col-span-2">
           <h2 className="mb-3 text-sm font-semibold text-slate-700 dark:text-slate-200">資訊</h2>
-          <dl className="grid grid-cols-2 gap-x-6 gap-y-2 text-sm">
+          <dl className="grid grid-cols-1 gap-x-6 gap-y-2 text-sm sm:grid-cols-2">
             <Info k="UUID" v={d.uuid} mono />
             <Info k="主機名稱" v={d.hostname} />
             <Info k="序號" v={d.serial} />
@@ -204,10 +270,28 @@ export default function DeviceDetail() {
             <Info k="MAC" v={d.mac} mono />
             <Info k="解析度" v={d.resolution} />
             <Info k="最後上線" v={d.last_seen_at ?? "—"} />
-            <Info k="使用中播放清單" v={d.active_playlist_id ? `#${d.active_playlist_id}` : "無"} />
           </dl>
+          <div className="mt-4 border-t border-slate-100 pt-4 dark:border-dark-border">
+            <label className="mb-1 block text-xs text-slate-500">主機名稱</label>
+            <div className="flex flex-col gap-2 sm:flex-row">
+              <input
+                className="input min-w-0 flex-1"
+                value={hostname}
+                disabled={!writable || actionBusy}
+                maxLength={63}
+                pattern="[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?"
+                onChange={(e) => setHostname(e.target.value)}
+              />
+              {writable && (
+                <button className="btn-primary shrink-0" disabled={actionBusy || hostname.trim() === d.hostname} onClick={() => void updateHostname()}>
+                  儲存並重新開機
+                </button>
+              )}
+            </div>
+            <p className="mt-1 text-xs text-slate-400">此操作會更新裝置名稱，並立即重新開機以完成套用。</p>
+          </div>
           {d.health && (
-            <div className="mt-4 grid grid-cols-3 gap-3">
+            <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-3">
               <Meter label="CPU" v={d.health.cpu} />
               <Meter label="記憶體" v={d.health.memory} />
               <Meter label="磁碟" v={d.health.disk} />
@@ -223,7 +307,7 @@ export default function DeviceDetail() {
                 <button
                   key={c.type}
                   className={c.danger ? "btn-danger" : "btn-ghost"}
-                  disabled={!writable}
+                  disabled={!writable || actionBusy}
                   onClick={() => runCommand(c.type)}
                 >
                   {c.label}
@@ -233,7 +317,7 @@ export default function DeviceDetail() {
           </div>
 
           <div>
-            <div className="mb-2 flex items-center justify-between">
+            <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
               <h2 className="text-sm font-semibold text-slate-700 dark:text-slate-200">SSH / Cloudflare Tunnel</h2>
               {writable && <button className="btn-ghost" onClick={() => reloadRemoteAccess()}>重新整理</button>}
             </div>
@@ -245,7 +329,6 @@ export default function DeviceDetail() {
             {remoteAccess?.configured && !remoteAccess.enabled && (
               <div className="space-y-2">
                 <p className="text-xs text-slate-400">此裝置尚未佈建 Tunnel。</p>
-                {user?.role === "admin" && <button className="btn-primary" onClick={() => void provisionRemoteAccess()}>佈建 SSH</button>}
               </div>
             )}
             {remoteAccess?.enabled && (
@@ -264,17 +347,25 @@ export default function DeviceDetail() {
                 {remoteAccess.status === "inactive" && (
                   <p className="text-slate-500">Tunnel 正在等待裝置上的 cloudflared。請重新執行裝置安裝程式,然後檢查 <code>systemctl status cloudflared</code>。</p>
                 )}
-                {user?.role === "admin" && (remoteAccess.status === "error" || remoteAccess.last_error || remoteAccess.needs_reprovision) && (
-                  <button className="btn-ghost" onClick={() => void provisionRemoteAccess()}>重新佈建 SSH</button>
-                )}
                 {remoteAccess.last_error && <p className="text-amber-600">{remoteAccess.last_error}</p>}
+              </div>
+            )}
+            {user?.role === "admin" && (
+              <div className="mt-3 flex flex-wrap gap-2">
+                <button
+                  className="btn-primary"
+                  disabled={!remoteAccess?.configured || actionBusy}
+                  onClick={() => void provisionRemoteAccess()}
+                >
+                  修復 SSH
+                </button>
               </div>
             )}
           </div>
 
           <div>
             <h2 className="mb-2 text-sm font-semibold text-slate-700 dark:text-slate-200">指派</h2>
-            <label className="mb-1 block text-xs text-slate-500">群組</label>
+            <label className="mb-1 block text-xs text-slate-500">裝置群組</label>
             <select
               className="input mb-2"
               disabled={!writable}
@@ -290,42 +381,21 @@ export default function DeviceDetail() {
             <select
               className="input mb-2"
               disabled={!writable}
-              value={d.source_type ?? "playlist"}
+              value={d.source_type ?? "scene"}
               onChange={(e) => {
-                const st = e.target.value as "playlist" | "scene" | "scene_playlist";
+                const st = e.target.value as "scene" | "scene_playlist";
                 // Keep any id already stored for that source type when switching.
                 const keep =
-                  st === "playlist"
-                    ? { playlist_id: d.playlist_id ?? null }
-                    : st === "scene"
+                  st === "scene"
                       ? { scene_id: d.scene_id ?? null }
                       : { scene_playlist_id: d.scene_playlist_id ?? null };
                 patch({ source_type: st, ...keep });
               }}
             >
-              <option value="playlist">{label(assignSourceLabels, "playlist")}</option>
               <option value="scene">{label(assignSourceLabels, "scene")}</option>
               <option value="scene_playlist">{label(assignSourceLabels, "scene_playlist")}</option>
             </select>
 
-            {(d.source_type ?? "playlist") === "playlist" && (
-              <select
-                className="input"
-                disabled={!writable}
-                value={d.playlist_id ?? ""}
-                onChange={(e) =>
-                  patch({
-                    source_type: "playlist",
-                    playlist_id: e.target.value ? Number(e.target.value) : null,
-                  })
-                }
-              >
-                <option value="">— 無 —</option>
-                {(playlists ?? []).map((p) => (
-                  <option key={p.id} value={p.id}>{p.name}</option>
-                ))}
-              </select>
-            )}
             {d.source_type === "scene" && (
               <select
                 className="input"
@@ -369,7 +439,7 @@ export default function DeviceDetail() {
 
           <div>
             <h2 className="mb-2 text-sm font-semibold text-slate-700 dark:text-slate-200">顯示</h2>
-            <div className="grid grid-cols-2 gap-2 text-sm">
+            <div className="grid grid-cols-1 gap-2 text-sm sm:grid-cols-2">
               <label className="flex items-center gap-2">
                 <input
                   type="checkbox"
@@ -408,7 +478,7 @@ export default function DeviceDetail() {
 
           <div>
             <h2 className="mb-2 text-sm font-semibold text-slate-700 dark:text-slate-200">監控與更新週期</h2>
-            <div className="grid grid-cols-2 gap-2 text-sm">
+            <div className="grid grid-cols-1 gap-2 text-sm sm:grid-cols-2">
               <IntervalInput label="健康回報" value={agentSettings.health_interval_sec} min={10} onChange={(value) => setAgentSettings({ ...agentSettings, health_interval_sec: value })} disabled={!writable} />
               <IntervalInput label="播放清單同步" value={agentSettings.playlist_poll_sec} min={10} onChange={(value) => setAgentSettings({ ...agentSettings, playlist_poll_sec: value })} disabled={!writable} />
               <IntervalInput label="自動截圖" value={agentSettings.screenshot_interval_sec} min={0} onChange={(value) => setAgentSettings({ ...agentSettings, screenshot_interval_sec: value })} disabled={!writable} />
@@ -421,9 +491,9 @@ export default function DeviceDetail() {
       </div>
 
       <div className="card">
-        <div className="mb-3 flex items-center justify-between">
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
           <h2 className="text-sm font-semibold text-slate-700 dark:text-slate-200">最近截圖</h2>
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             {writable && (
               <>
                 <button className="btn-ghost" disabled={!shots?.length} onClick={selectAllScreenshots}>
@@ -472,7 +542,7 @@ export default function DeviceDetail() {
       </div>
 
       <div className="space-y-3">
-        <div className="flex items-center justify-between gap-3">
+        <div className="flex flex-wrap items-center justify-between gap-3">
           <h2 className="card-title">指令歷史</h2>
           {writable && (
             <div className="flex gap-2">
@@ -504,7 +574,10 @@ export default function DeviceDetail() {
                   )}
                   <td className="td whitespace-nowrap text-xs">{c.issued_at}</td>
                   <td className="td">{label(commandTypeLabels, c.type)}</td>
-                  <td className="td">{label(commandStatusLabels, c.status)}</td>
+                  <td className="td">
+                    <div>{label(commandStatusLabels, c.status)}</div>
+                    {c.detail && <div className="mt-0.5 break-words text-xs text-slate-400">{c.detail}</div>}
+                  </td>
                   {writable && (
                     <td className="td">
                       <button className="text-red-600 hover:underline" onClick={() => void deleteCommand(c.id)}>刪除</button>
@@ -523,7 +596,7 @@ export default function DeviceDetail() {
           </table>
         </TableCard>
         {commandHistory && (
-          <div className="flex items-center justify-between text-sm text-slate-500">
+          <div className="flex flex-wrap items-center justify-between gap-3 text-sm text-slate-500">
             <span>共 {commandHistory.total} 筆，第 {commandHistory.page} / {commandHistory.total_pages} 頁</span>
             <div className="flex gap-2">
               <button
@@ -544,11 +617,11 @@ export default function DeviceDetail() {
   );
 }
 
-function Info({ k, v, mono }: { k: string; v: string; mono?: boolean }) {
+function Info({ k, v }: { k: string; v: string; mono?: boolean }) {
   return (
     <div>
       <dt className="text-xs text-slate-400 dark:text-dark-subtle">{k}</dt>
-      <dd className={mono ? "font-mono text-xs" : ""}>{v || "—"}</dd>
+      <dd className="break-all text-sm text-slate-700 dark:text-dark-text">{v || "—"}</dd>
     </div>
   );
 }

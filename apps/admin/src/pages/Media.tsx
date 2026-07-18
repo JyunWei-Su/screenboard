@@ -3,6 +3,7 @@ import { api, contentUrl } from "../api";
 import { useFetch } from "../hooks";
 import { canWrite, useAuth } from "../auth";
 import { PageHeader } from "../components/ui";
+import { IconFileText, IconGlobe, IconVideo } from "../components/icons";
 import { label, mediaTypeLabels } from "../labels";
 
 interface MediaRow {
@@ -85,9 +86,9 @@ export default function Media() {
                   loading="lazy"
                 />
               ) : (
-                <span className="text-4xl">
-                  {m.type === "video" ? "🎬" : m.type === "pdf" ? "📄" : "🌐"}
-                </span>
+                m.type === "video" ? <IconVideo className="h-10 w-10 text-slate-400" /> :
+                  m.type === "pdf" ? <IconFileText className="h-10 w-10 text-slate-400" /> :
+                    <IconGlobe className="h-10 w-10 text-slate-400" />
               )}
             </div>
             <div className="truncate text-sm font-medium" title={m.filename}>

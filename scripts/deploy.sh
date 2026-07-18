@@ -11,7 +11,7 @@ set -a
 . ./.env
 set +a
 
-required=(CLOUDFLARE_API_TOKEN CF_ACCOUNT_ID CF_ZONE_ID API_DOMAIN ADMIN_DOMAIN CF_ACCESS_ALLOWED_EMAILS JWT_SECRET DEVICE_JWT_SECRET BOOTSTRAP_TOKEN TOTP_ENC_KEY CF_API_TOKEN)
+required=(CLOUDFLARE_API_TOKEN CF_ACCOUNT_ID CF_ZONE_ID API_DOMAIN ADMIN_DOMAIN JWT_SECRET DEVICE_JWT_SECRET BOOTSTRAP_TOKEN TOTP_ENC_KEY CF_API_TOKEN)
 for key in "${required[@]}"; do
   [ -n "${!key:-}" ] || { echo "Missing $key in .env" >&2; exit 1; }
 done
@@ -68,7 +68,7 @@ sed -e "s/REPLACE_WITH_D1_DATABASE_ID/$d1_id/" \
     "$ROOT/apps/api/wrangler.jsonc" >"$tmp_config"
 # Add an exact Worker custom domain without altering the tracked configuration.
 sed -i "s#\"main\": \"src/index.ts\",#\"main\": \"src/index.ts\",\n  \"routes\": [{ \"pattern\": \"$API_DOMAIN\", \"custom_domain\": true }],#" "$tmp_config"
-sed -i "s#\"PUBLIC_API_URL\": \"https://$API_DOMAIN\"#\"PUBLIC_API_URL\": \"https://$API_DOMAIN\",\n    \"CF_ACCOUNT_ID\": \"$ACCOUNT_ID\",\n    \"CF_ZONE_ID\": \"$CF_ZONE_ID\",\n    \"CF_ZONE_NAME\": \"$zone_name\",\n    \"CF_ACCESS_ALLOWED_EMAILS\": \"$CF_ACCESS_ALLOWED_EMAILS\"#" "$tmp_config"
+sed -i "s#\"PUBLIC_API_URL\": \"https://$API_DOMAIN\"#\"PUBLIC_API_URL\": \"https://$API_DOMAIN\",\n    \"CF_ACCOUNT_ID\": \"$ACCOUNT_ID\",\n    \"CF_ZONE_ID\": \"$CF_ZONE_ID\",\n    \"CF_ZONE_NAME\": \"$zone_name\"#" "$tmp_config"
 
 printf '{"JWT_SECRET":%s,"DEVICE_JWT_SECRET":%s,"BOOTSTRAP_TOKEN":%s,"TOTP_ENC_KEY":%s,"CF_API_TOKEN":%s}\n' \
   "$(node -p 'JSON.stringify(process.argv[1])' "$JWT_SECRET")" \
@@ -84,7 +84,20 @@ echo "==> Uploading Worker secrets and deploying API"
 
 echo "==> Building and deploying admin console"
 ( cd apps/admin && VITE_API_URL="https://$API_DOMAIN" npm run build )
-"${WRANGLER[@]}" pages project create "$PAGES_PROJECT_NAME" --production-branch main || true
+pages_project_status="$(curl --silent --show-error --output /dev/null --write-out '%{http_code}' \
+  -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+  "https://api.cloudflare.com/client/v4/accounts/$ACCOUNT_ID/pages/projects/$PAGES_PROJECT_NAME")"
+case "$pages_project_status" in
+  200) echo "==> Pages project already exists" ;;
+  404)
+    echo "==> Creating Pages project"
+    "${WRANGLER[@]}" pages project create "$PAGES_PROJECT_NAME" --production-branch main
+    ;;
+  *)
+    echo "Could not verify Pages project $PAGES_PROJECT_NAME (HTTP $pages_project_status)." >&2
+    exit 1
+    ;;
+esac
 "${WRANGLER[@]}" pages deploy apps/admin/dist --project-name "$PAGES_PROJECT_NAME"
 
 echo "==> Attaching admin custom domain"

@@ -140,39 +140,28 @@ func (a *Agent) reportHealth() {
 	}
 }
 
-// syncTarget fetches the device's single effective target (playlist / scene /
-// scene_playlist). If the target endpoint is unavailable (older API), it falls
-// back to the legacy playlist poll so back-compat behaviour is preserved.
+// syncTarget fetches the device's single effective scene or scene-group target.
 func (a *Agent) syncTarget() {
 	t, err := a.client.GetTarget()
 	if err != nil {
-		a.syncPlaylist()
+		log.Printf("target: %v", err)
 		return
 	}
 	a.player.SetTarget(t)
 }
 
-func (a *Agent) syncPlaylist() {
-	pl, err := a.client.GetPlaylist()
-	if err != nil {
-		log.Printf("playlist: %v", err)
-		return
-	}
-	if pl.PlaylistID == 0 {
-		return
-	}
-	a.player.SetPlaylist(pl)
-}
-
 func (a *Agent) autoScreenshot() {
-	a.captureAndPost("auto")
+	_ = a.captureAndPost("auto")
 }
 
-func (a *Agent) captureAndPost(trigger string) {
+func (a *Agent) captureAndPost(trigger string) bool {
 	img, err := CaptureScreenshot()
 	if err != nil {
 		log.Printf("screenshot: %v", err)
-		return
+		if trigger == "manual" {
+			a.player.Notify("擷取螢幕畫面失敗："+err.Error(), "error", false)
+		}
+		return false
 	}
 	analysis := ""
 	if isBlackScreen(img) {
@@ -180,7 +169,12 @@ func (a *Agent) captureAndPost(trigger string) {
 	}
 	if err := a.client.PostScreenshot(img, trigger, analysis); err != nil {
 		log.Printf("screenshot post: %v", err)
+		if trigger == "manual" {
+			a.player.Notify("回傳螢幕畫面失敗："+err.Error(), "error", false)
+		}
+		return false
 	}
+	return true
 }
 
 // handleCommand executes a server command and returns the ack outcome.
@@ -192,14 +186,19 @@ func (a *Agent) handleCommand(cmd ServerCommand) (bool, string) {
 		a.reportDeviceInfo()
 		a.reportResolution()
 		a.reportHealth()
+		go a.notifyAfter("管理端要求的重新載入已完成", "success", time.Second)
 	case "restart_player":
 		a.player.Notify("正在重新啟動播放器…", "warning", true)
 		a.player.LaunchChromium()
 		go a.notifyAfter("播放器已重新啟動", "success", time.Second)
-	case "switch_playlist", "switch_scene":
+	case "switch_scene":
 		a.syncTarget()
 	case "take_screenshot":
-		a.captureAndPost("manual")
+		a.player.Notify("管理端要求擷取螢幕畫面…", "warning", true)
+		if !a.captureAndPost("manual") {
+			return false, "screenshot failed"
+		}
+		a.player.Notify("螢幕畫面已擷取並回傳管理端", "success", false)
 	case "check_update":
 		a.player.Notify("正在檢查並套用更新…", "warning", true)
 		updated, err := MaybeUpdate(a.client, func(version string) {
@@ -221,6 +220,28 @@ func (a *Agent) handleCommand(cmd ServerCommand) (bool, string) {
 		}
 		a.player.Notify("NTP 對時已啟用", "success", false)
 		return true, detail
+	case "set_hostname":
+		hostname, ok := cmd.Payload["hostname"].(string)
+		if !ok {
+			return false, "missing hostname"
+		}
+		a.player.Notify("正在修改裝置名稱…", "warning", true)
+		if err := SetHostname(hostname); err != nil {
+			a.player.Notify("修改裝置名稱失敗："+err.Error(), "error", false)
+			return false, err.Error()
+		}
+		a.reportDeviceInfo()
+		if reboot, _ := cmd.Payload["reboot"].(bool); reboot {
+			a.player.Notify("裝置名稱已更新，正在重新開機…", "warning", true)
+			time.Sleep(1500 * time.Millisecond)
+			if err := Reboot(); err != nil {
+				a.player.Notify("重新開機失敗："+err.Error(), "error", false)
+				return false, err.Error()
+			}
+			return true, "hostname updated; rebooting"
+		}
+		a.player.Notify("裝置名稱已更新", "success", false)
+		return true, "hostname updated"
 	case "reboot":
 		a.player.Notify("裝置即將重新啟動…", "warning", true)
 		time.Sleep(1500 * time.Millisecond)

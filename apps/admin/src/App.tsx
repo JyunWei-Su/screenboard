@@ -6,8 +6,6 @@ import Dashboard from "./pages/Dashboard";
 import Devices from "./pages/Devices";
 import DeviceDetail from "./pages/DeviceDetail";
 import Groups from "./pages/Groups";
-import Playlists from "./pages/Playlists";
-import PlaylistEditor from "./pages/PlaylistEditor";
 import Scenes from "./pages/Scenes";
 import SceneEditor from "./pages/SceneEditor";
 import ScenePlaylists from "./pages/ScenePlaylists";
@@ -16,6 +14,7 @@ import Media from "./pages/Media";
 import Schedules from "./pages/Schedules";
 import Ota from "./pages/Ota";
 import Users from "./pages/Users";
+import Settings from "./pages/Settings";
 
 export default function App() {
   const { user, loading } = useAuth();
@@ -32,16 +31,17 @@ export default function App() {
         <Route path="/devices" element={<Devices />} />
         <Route path="/devices/:uuid" element={<DeviceDetail />} />
         <Route path="/groups" element={<Groups />} />
-        <Route path="/playlists" element={<Playlists />} />
-        <Route path="/playlists/:id" element={<PlaylistEditor />} />
         <Route path="/scenes" element={<Scenes />} />
         <Route path="/scenes/:id" element={<SceneEditor />} />
         <Route path="/scene-playlists" element={<ScenePlaylists />} />
         <Route path="/scene-playlists/:id" element={<ScenePlaylistEditor />} />
+        <Route path="/scene-groups" element={<ScenePlaylists />} />
+        <Route path="/scene-groups/:id" element={<ScenePlaylistEditor />} />
         <Route path="/media" element={<Media />} />
         <Route path="/schedules" element={<Schedules />} />
         <Route path="/ota" element={<Ota />} />
         <Route path="/users" element={<Users />} />
+        <Route path="/settings" element={<Settings />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Route>
     </Routes>

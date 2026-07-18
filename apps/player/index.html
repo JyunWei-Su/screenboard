@@ -142,6 +142,26 @@
     return { el, ready };
   }
 
+  function buildCarousel(wg, ctx) {
+    const cfg = wg.config || {}, items = Array.isArray(cfg.items) ? cfg.items : [];
+    const wrap = document.createElement('div'); wrap.style.position = 'relative';
+    if (!items.length) { showWidgetError(wrap, '輪播尚無項目'); return { el: wrap, ready: Promise.resolve() }; }
+    let index = 0, timer = null, refreshTimer = null, current = null, stopped = false;
+    const stop = () => { stopped = true; if (timer) clearTimeout(timer); if (refreshTimer) clearInterval(refreshTimer); if (current && current.tagName === 'VIDEO') current.pause(); };
+    ctx.timers.push(stop);
+    function show() {
+      if (stopped) return; if (refreshTimer) { clearInterval(refreshTimer); refreshTimer = null; } const item = items[index] || {}, old = current; let el;
+      const advance = () => { index++; if (index >= items.length) { if (cfg.loop === false) return; index = 0; } show(); };
+      if (item.kind === 'video') { el = document.createElement('video'); el.autoplay = true; el.muted = item.muted !== false; el.loop = item.play_until_end ? false : item.loop !== false; el.playsInline = true; el.controls = false; el.style.objectFit = item.fit || 'contain'; el.src = SRC(item.source || item.url || ''); el.oncanplay = () => el.play().catch(() => {}); if (item.play_until_end) el.onended = advance; }
+      else if (item.kind === 'web') { el = document.createElement('iframe'); el.setAttribute('scrolling', 'no'); el.setAttribute('referrerpolicy', 'no-referrer'); el.setAttribute('sandbox', 'allow-scripts allow-same-origin allow-popups allow-forms'); const raw = item.url || item.source || ''; el.src = item.mode === 'proxy' && PROXY_BASE ? PROXY_BASE + '?url=' + encodeURIComponent(raw) : SRC(raw); if (Number(item.refresh_sec) > 0) refreshTimer = setInterval(() => { try { el.src = el.src; } catch (_) {} }, Number(item.refresh_sec) * 1000); }
+      else { el = document.createElement('img'); el.style.objectFit = item.fit || 'contain'; el.src = SRC(item.source || item.url || ''); }
+      el.style.position = 'absolute'; el.style.inset = '0'; el.style.width = '100%'; el.style.height = '100%'; el.onerror = () => { ctx.errors[wg.id] = 'carousel item load failed'; if (item.play_until_end) advance(); };
+      wrap.appendChild(el); current = el; if (old) { try { if (old.tagName === 'VIDEO') old.pause(); old.remove(); } catch (_) {} }
+      if (!item.play_until_end) timer = setTimeout(advance, Math.max(1000, Number(item.dwell_sec || 10) * 1000));
+    }
+    show(); return { el: wrap, ready: Promise.resolve() };
+  }
+
   function buildWeb(wg, ctx) {
     const cfg = wg.config || {};
     const wmode = cfg.mode || 'embed';
@@ -171,8 +191,9 @@
     return { el, ready };
   }
 
-  function buildText(wg) {
+  function buildText(wg, ctx) {
     const cfg = wg.config || {};
+    if (cfg.behavior === 'ticker') return buildTicker(wg, ctx);
     const box = document.createElement('div');
     box.className = 'text-widget';
     box.style.color = cfg.color || '#fff';
@@ -291,17 +312,35 @@
       dateEl.style.fontSize = Math.round(base * 0.4) + 'px';
       box.appendChild(dateEl);
     }
+    let lunarEl = null;
+    if (cfg.show_lunar) {
+      lunarEl = document.createElement('div');
+      lunarEl.className = 'clock-date';
+      lunarEl.style.fontSize = Math.round(base * 0.34) + 'px';
+      lunarEl.style.opacity = '.75';
+      box.appendChild(lunarEl);
+    }
     const use12 = cfg.format === '12h';
+    const locale = ['zh-TW', 'zh-CN', 'en-US', 'ja-JP', 'ko-KR'].includes(cfg.locale) ? cfg.locale : 'zh-TW';
     function tick() {
       const now = new Date();
       const topt = { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: use12 };
-      const dopt = { year: 'numeric', month: '2-digit', day: '2-digit', weekday: 'short' };
-      if (cfg.timezone) { topt.timeZone = cfg.timezone; dopt.timeZone = cfg.timezone; }
-      try { timeEl.textContent = new Intl.DateTimeFormat(undefined, topt).format(now); }
+      const dopt = cfg.date_format === 'short'
+        ? { year: 'numeric', month: 'numeric', day: 'numeric' }
+        : cfg.date_format === 'long'
+          ? { year: 'numeric', month: 'long', day: 'numeric', weekday: 'long' }
+          : { year: 'numeric', month: '2-digit', day: '2-digit', weekday: 'short' };
+      const lopt = { month: 'long', day: 'numeric', weekday: 'short' };
+      if (cfg.timezone) { topt.timeZone = cfg.timezone; dopt.timeZone = cfg.timezone; lopt.timeZone = cfg.timezone; }
+      try { timeEl.textContent = new Intl.DateTimeFormat(locale, topt).format(now); }
       catch (_) { timeEl.textContent = now.toLocaleTimeString(); }
       if (dateEl) {
-        try { dateEl.textContent = new Intl.DateTimeFormat(undefined, dopt).format(now); }
+        try { dateEl.textContent = new Intl.DateTimeFormat(locale, dopt).format(now); }
         catch (_) { dateEl.textContent = now.toLocaleDateString(); }
+      }
+      if (lunarEl) {
+        try { lunarEl.textContent = new Intl.DateTimeFormat(locale + '-u-ca-chinese', lopt).format(now); }
+        catch (_) { lunarEl.textContent = ''; }
       }
     }
     tick();
@@ -314,6 +353,7 @@
     switch (wg.kind) {
       case 'image': return buildImage(wg, ctx);
       case 'video': return buildVideo(wg, ctx);
+      case 'carousel': return buildCarousel(wg, ctx);
       case 'web': return buildWeb(wg, ctx);
       case 'text': return buildText(wg, ctx);
       case 'ticker': return buildTicker(wg, ctx);

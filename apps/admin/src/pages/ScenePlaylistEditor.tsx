@@ -5,6 +5,7 @@ import type { ScenePlaylistDetail, ScenePlaylistItemInput, SceneSummary } from "
 import { useFetch } from "../hooks";
 import { canWrite, useAuth } from "../auth";
 import { label, sceneStatusLabels } from "../labels";
+import { IconCheck, IconClose } from "../components/icons";
 
 interface Entry {
   scene_id: number;
@@ -71,19 +72,19 @@ export default function ScenePlaylistEditor() {
   return (
     <div className="space-y-5">
       <div className="flex flex-wrap items-center gap-3">
-        <Link to="/scene-playlists" className="text-sm text-slate-400 hover:text-brand-600 hover:underline">
-          場景輪播
+        <Link to="/scene-groups" className="text-sm text-slate-400 hover:text-brand-600 hover:underline">
+          場景群組
         </Link>
         <span className="text-slate-300">/</span>
         <h1 className="text-xl font-semibold tracking-tight sm:text-2xl">{data.name}</h1>
         <span className="text-sm text-slate-500 dark:text-dark-muted">{entries.length} 個場景</span>
         {writable && (
-          <div className="ml-auto flex items-center gap-2">
+          <div className="flex w-full flex-wrap items-center gap-2 sm:ml-auto sm:w-auto">
             <button className="btn-ghost" onClick={add} disabled={!(scenes ?? []).length}>
               + 新增場景
             </button>
             <button className="btn-primary" onClick={save}>
-              {saved ? "已儲存 ✓" : "儲存"}
+              {saved ? <><IconCheck className="h-4 w-4" />已儲存</> : "儲存"}
             </button>
           </div>
         )}
@@ -154,7 +155,7 @@ export default function ScenePlaylistEditor() {
                   ↓
                 </button>
                 <button className="btn-danger btn-sm !px-2.5" onClick={() => remove(idx)} title="移除">
-                  ✕
+                  <IconClose className="h-4 w-4" />
                 </button>
               </div>
             )}

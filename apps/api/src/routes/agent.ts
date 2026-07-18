@@ -2,7 +2,7 @@ import { Hono } from "hono";
 import type { Env, Variables } from "../types";
 import { deviceAuth } from "../auth";
 import { deviceStub } from "../lib/command";
-import { buildResolvedPlaylist, resolvePlaylistId, resolveTarget } from "../lib/resolve";
+import { resolveTarget } from "../lib/resolve";
 import { recordEvent } from "../lib/notify";
 import { allowedSshUsers, createTunnelToken, remoteAccessConfigured } from "../lib/cloudflareTunnel";
 import type { HealthSample, OtaUpdateResponse } from "@screenboard/shared";
@@ -147,35 +147,17 @@ app.post("/screenshot", async (c) => {
   return c.json({ id: res.meta.last_row_id });
 });
 
-// Resolve the playlist the device should currently play.
-app.get("/playlist", async (c) => {
-  const uuid = c.get("deviceUuid");
-  const device = await c.env.DB.prepare(
-    "SELECT uuid, group_id, playlist_id FROM devices WHERE uuid = ?",
-  )
-    .bind(uuid)
-    .first<{ uuid: string; group_id: number | null; playlist_id: number | null }>();
-  if (!device) return c.json({ error: "unknown_device" }, 404);
-  const playlistId = await resolvePlaylistId(c.env, device);
-  if (!playlistId) return c.json({ playlist_id: null, items: [] });
-  const resolved = await buildResolvedPlaylist(c.env, playlistId);
-  return c.json(resolved ?? { playlist_id: null, items: [] });
-});
-
-// Resolve the single effective playback target (playlist | scene |
-// scene_playlist | none) for this device right now. Newer agents use this in
-// place of /playlist; /playlist is kept unchanged for back-compat.
+// Resolve the single effective playback target (scene | scene group | none).
 app.get("/target", async (c) => {
   const uuid = c.get("deviceUuid");
   const device = await c.env.DB.prepare(
-    "SELECT uuid, group_id, source_type, playlist_id, scene_id, scene_playlist_id FROM devices WHERE uuid = ?",
+    "SELECT uuid, group_id, source_type, scene_id, scene_playlist_id FROM devices WHERE uuid = ?",
   )
     .bind(uuid)
     .first<{
       uuid: string;
       group_id: number | null;
       source_type: string;
-      playlist_id: number | null;
       scene_id: number | null;
       scene_playlist_id: number | null;
     }>();
@@ -206,7 +188,7 @@ app.get("/remote-access", async (c) => {
       hostname: row.hostname,
       tunnel_token: tunnelToken,
       ssh_ca_public_key: row.ssh_ca_public_key,
-      ssh_users: allowedSshUsers(c.env),
+      ssh_users: await allowedSshUsers(c.env),
     });
   } catch (error) {
     console.error(JSON.stringify({ event: "remote_access_token_failed", device_id: uuid, error: String(error) }));

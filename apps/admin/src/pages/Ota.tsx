@@ -222,13 +222,13 @@ export default function Ota() {
               onChange={(e) => setStrategy(e.target.value as "all" | "group" | "canary")}
             >
               <option value="all">全部</option>
-              <option value="group">群組</option>
+              <option value="group">裝置群組</option>
               <option value="canary">金絲雀(%)</option>
             </select>
           </div>
           {strategy === "group" && (
             <div>
-              <label className="label">群組</label>
+              <label className="label">裝置群組</label>
               <select className="select" value={target} onChange={(e) => setTarget(e.target.value)}>
                 <option value="">— 選擇 —</option>
                 {(groups ?? []).map((g) => (

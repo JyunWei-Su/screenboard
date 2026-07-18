@@ -5,13 +5,10 @@ import { canWrite, useAuth } from "../auth";
 import { EmptyRow, PageHeader, TableCard } from "../components/ui";
 import { assignSourceLabels, label, targetTypeLabels } from "../labels";
 
-type SourceType = "playlist" | "scene" | "scene_playlist";
+type SourceType = "scene" | "scene_playlist";
 
 interface Schedule {
   id: number;
-  // legacy playlist fields (kept for the migration period)
-  playlist_id: number | null;
-  playlist_name: string | null;
   // new scene assignment fields (optional; API being extended in parallel)
   source_type?: SourceType;
   scene_id?: number | null;
@@ -29,19 +26,18 @@ interface NamedRow { id: number; name: string }
 interface DeviceRow { uuid: string; name: string }
 
 const DAYS = ["日", "一", "二", "三", "四", "五", "六"];
-const SOURCE_TYPES: SourceType[] = ["playlist", "scene", "scene_playlist"];
+const SOURCE_TYPES: SourceType[] = ["scene", "scene_playlist"];
 
 export default function Schedules() {
   const { user } = useAuth();
   const writable = canWrite(user);
   const { data, reload } = useFetch<Schedule[]>("/api/schedules");
-  const { data: playlists } = useFetch<NamedRow[]>("/api/playlists");
   const { data: scenes } = useFetch<NamedRow[]>("/api/scenes");
   const { data: scenePlaylists } = useFetch<NamedRow[]>("/api/scene-playlists");
   const { data: groups } = useFetch<NamedRow[]>("/api/groups");
   const { data: devices } = useFetch<DeviceRow[]>("/api/devices");
 
-  const [sourceType, setSourceType] = useState<SourceType>("playlist");
+  const [sourceType, setSourceType] = useState<SourceType>("scene");
   const [sourceId, setSourceId] = useState("");
   const [targetType, setTargetType] = useState<"group" | "device">("group");
   const [targetId, setTargetId] = useState("");
@@ -52,8 +48,7 @@ export default function Schedules() {
 
   const weekdays = days.reduce((m, on, i) => (on ? m | (1 << i) : m), 0);
 
-  const sourceOptions =
-    sourceType === "playlist" ? playlists : sourceType === "scene" ? scenes : scenePlaylists;
+  const sourceOptions = sourceType === "scene" ? scenes : scenePlaylists;
 
   async function create() {
     if (!sourceId || !targetId) return;
@@ -66,8 +61,7 @@ export default function Schedules() {
       weekdays,
       priority,
     };
-    if (sourceType === "playlist") body.playlist_id = Number(sourceId);
-    else if (sourceType === "scene") body.scene_id = Number(sourceId);
+    if (sourceType === "scene") body.scene_id = Number(sourceId);
     else body.scene_playlist_id = Number(sourceId);
     await api.post("/api/schedules", body);
     setSourceId("");
@@ -83,19 +77,17 @@ export default function Schedules() {
   }
 
   function sourceCell(s: Schedule) {
-    const t: SourceType = s.source_type ?? "playlist";
+    const t: SourceType = s.source_type ?? "scene";
     const name =
       t === "scene"
         ? s.scene_name
-        : t === "scene_playlist"
-          ? s.scene_playlist_name
-          : s.playlist_name;
+        : s.scene_playlist_name;
     return `${label(assignSourceLabels, t)}:${name ?? "—"}`;
   }
 
   return (
     <div className="space-y-5">
-      <PageHeader title="排程" subtitle="依時間與星期指派播放清單、場景或場景輪播" />
+      <PageHeader title="排程" subtitle="依時間與星期指派場景或場景群組" />
 
       {writable && (
         <div className="card space-y-4">
@@ -138,12 +130,12 @@ export default function Schedules() {
                   setTargetId("");
                 }}
               >
-                <option value="group">群組</option>
+                <option value="group">裝置群組</option>
                 <option value="device">裝置</option>
               </select>
             </div>
             <div>
-              <label className="label">{targetType === "group" ? "群組" : "裝置"}</label>
+              <label className="label">{targetType === "group" ? "裝置群組" : "裝置"}</label>
               <select className="select" value={targetId} onChange={(e) => setTargetId(e.target.value)}>
                 <option value="">— 選擇 —</option>
                 {targetType === "group"
@@ -199,7 +191,7 @@ export default function Schedules() {
             </button>
           </div>
           <p className="text-xs text-slate-400">
-            時間以 UTC 解讀。排程重疊時,優先度較高者勝出;優先度相同時,以裝置為目標的排程優先於群組。
+            時間以 UTC 解讀。排程重疊時,優先度較高者勝出;優先度相同時,以裝置為目標的排程優先於裝置群組。
           </p>
         </div>
       )}

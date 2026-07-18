@@ -17,23 +17,23 @@ export default function ScenePlaylists() {
     if (!name.trim()) return;
     const created = await scenePlaylistsApi.create({ name: name.trim() });
     setName("");
-    if (created?.id) navigate(`/scene-playlists/${created.id}`);
+    if (created?.id) navigate(`/scene-groups/${created.id}`);
     else reload();
   }
   async function remove(id: number) {
-    if (!confirm("要刪除場景輪播清單嗎?")) return;
+    if (!confirm("要刪除場景群組嗎?")) return;
     await scenePlaylistsApi.remove(id);
     reload();
   }
 
   return (
     <div className="space-y-5">
-      <PageHeader title="場景輪播" subtitle="輪播多個完整場景,而非單一媒體" />
+      <PageHeader title="場景群組" subtitle="將多個完整場景依序播放" />
 
       {writable && (
         <div className="card flex flex-col gap-3 sm:flex-row sm:items-end">
           <div className="grow">
-            <label className="label">新場景輪播名稱</label>
+            <label className="label">新場景群組名稱</label>
             <input
               className="input"
               value={name}
@@ -64,7 +64,7 @@ export default function ScenePlaylists() {
                 <td className="td">
                   <Link
                     className="font-medium text-brand-600 hover:text-brand-700 hover:underline"
-                    to={`/scene-playlists/${p.id}`}
+                    to={`/scene-groups/${p.id}`}
                   >
                     {p.name}
                   </Link>
@@ -94,7 +94,7 @@ export default function ScenePlaylists() {
                 </td>
               </tr>
             ))}
-            {data && data.length === 0 && <EmptyRow colSpan={5}>尚無場景輪播清單。</EmptyRow>}
+            {data && data.length === 0 && <EmptyRow colSpan={5}>尚無場景群組。</EmptyRow>}
           </tbody>
         </table>
       </TableCard>

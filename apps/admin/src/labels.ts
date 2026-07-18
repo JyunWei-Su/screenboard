@@ -43,13 +43,13 @@ export const mediaTypeLabels: Record<string, string> = {
 };
 
 export const targetTypeLabels: Record<string, string> = {
-  group: "群組",
+  group: "裝置群組",
   device: "裝置",
 };
 
 export const otaStrategyLabels: Record<string, string> = {
   all: "全部",
-  group: "群組",
+  group: "裝置群組",
   canary: "金絲雀",
 };
 
@@ -85,6 +85,7 @@ export const sceneStatusLabels: Record<string, string> = {
 export const widgetKindLabels: Record<string, string> = {
   image: "圖片",
   video: "影片",
+  carousel: "輪播",
   web: "網頁",
   text: "文字",
   ticker: "跑馬燈",
@@ -145,9 +146,23 @@ export const clockFormatLabels: Record<string, string> = {
   "12h": "12 小時制",
 };
 
+export const clockLocaleLabels: Record<string, string> = {
+  "zh-TW": "繁體中文（台灣）",
+  "zh-CN": "简体中文（中国）",
+  "en-US": "English (US)",
+  "ja-JP": "日本語",
+  "ko-KR": "한국어",
+};
+
+export const clockDateFormatLabels: Record<string, string> = {
+  numeric: "數字＋星期",
+  short: "簡短數字日期",
+  long: "完整日期＋星期",
+};
+
 // Assignment source for schedules / device defaults.
 export const assignSourceLabels: Record<string, string> = {
   playlist: "播放清單",
   scene: "場景",
-  scene_playlist: "場景輪播",
+  scene_playlist: "場景群組",
 };

@@ -16,9 +16,9 @@ export function PageHeader({
         <h1 className="truncate text-xl font-semibold tracking-tight text-slate-900 sm:text-2xl dark:text-dark-text">
           {title}
         </h1>
-        {subtitle && <p className="mt-1 text-sm text-slate-500 dark:text-dark-muted">{subtitle}</p>}
+        {subtitle && <p className="mt-1 break-words text-sm text-slate-500 dark:text-dark-muted">{subtitle}</p>}
       </div>
-      {children && <div className="flex flex-wrap items-center gap-2">{children}</div>}
+      {children && <div className="flex w-full flex-wrap items-center gap-2 sm:w-auto">{children}</div>}
     </div>
   );
 }

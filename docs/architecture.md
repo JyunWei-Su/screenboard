@@ -1,6 +1,8 @@
 # ScreenBoard 電子看板平台 — 架構設計
 
 > 本文件為系統架構設計（技術選型 / 架構圖 / 資料模型 / 元件拆分 / 協定），不含逐步實作。
+>
+> 逐步部署步驟請見 [deploy.md](deploy.md)。
 
 ## 背景與目標
 
@@ -118,7 +120,7 @@ screenboard/
 
 ## 資料模型（D1 主要資料表）
 
-- `groups`：樹狀分群（Site/Building/Floor/Department/Custom），`id, name, parent_id, type`（鄰接表）。
+- `groups`：裝置分群（扁平、無巢狀、無類型），`id, name`。
 - `devices`：`uuid, name, hostname, serial, os_version, agent_version, ip, mac, resolution,
   group_id, status(online/offline/warning/maintenance), last_seen_at, registered_at`。
 - `enrollment_tokens`：`token, group_id, expires_at, used_by_uuid`（首開機註冊用）。

@@ -3,6 +3,8 @@
 This guide deploys ScreenBoard with a Cloudflare Worker API, Pages admin console,
 per-device Cloudflare Tunnel, Cloudflare Access browser SSH, and Debian kiosk devices.
 
+> For system design and rationale, see [architecture.md](architecture.md).
+
 ## Automated deployment
 
 For a first deployment, copy `.env.example` to `.env`, fill in an API Token and the

@@ -6,7 +6,7 @@ remotely, monitor health, capture screenshots, and ship agent updates over the a
 
 > Architecture design & rationale: [docs/architecture.md](docs/architecture.md)
 >
-> Deployment checklist: [DEPLOY.md](DEPLOY.md)
+> Deployment guide: [docs/deploy.md](docs/deploy.md)
 
 ## Stack
 
@@ -35,7 +35,7 @@ screenboard/
 ├─ agent/        # Go device agent (kiosk player control, health, OTA, screenshots)
 ├─ packages/
 │  └─ shared/    # Shared TypeScript protocol types
-└─ docs/         # Architecture design
+└─ docs/         # Architecture design + deployment guide
 ```
 
 ---

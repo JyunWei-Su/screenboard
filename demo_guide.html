@@ -17,7 +17,6 @@
   }
   @media (max-width: 860px) { body { grid-template-columns: 1fr; } }
 
-  /* ---- controls ---- */
   .controls { background: var(--panel); border-right: 1px solid var(--line); padding: 18px 18px 40px; overflow-y: auto; }
   .controls h1 { font-size: 16px; margin: 0 0 4px; }
   .controls .hint { color: var(--muted); font-size: 12px; margin: 0 0 16px; }
@@ -26,53 +25,35 @@
   .field { display: grid; grid-template-columns: 92px 1fr; align-items: center; gap: 8px; margin-bottom: 9px; }
   .field:last-child { margin-bottom: 0; }
   .field > label { color: var(--muted); font-size: 12px; }
-  .field .val { color: var(--text); font-variant-numeric: tabular-nums; font-size: 12px; text-align: right; }
   .field.range { grid-template-columns: 92px 1fr 38px; }
+  .field .val { color: var(--text); font-variant-numeric: tabular-nums; font-size: 12px; text-align: right; }
   input[type=range] { width: 100%; accent-color: var(--accent); }
-  select, input[type=text] {
-    width: 100%; background: #10131a; color: var(--text); border: 1px solid var(--line);
-    border-radius: 7px; padding: 6px 8px; font: inherit;
-  }
+  input[type=text] { width: 100%; background: #10131a; color: var(--text); border: 1px solid var(--line); border-radius: 7px; padding: 6px 8px; font: inherit; }
   input[type=color] { width: 100%; height: 30px; border: 1px solid var(--line); border-radius: 7px; background: none; padding: 2px; }
   .seg { display: flex; flex-wrap: wrap; gap: 6px; }
   .seg button {
-    flex: 1 1 auto; min-width: 56px; background: #10131a; color: var(--muted); border: 1px solid var(--line);
+    flex: 1 1 auto; min-width: 52px; background: #10131a; color: var(--muted); border: 1px solid var(--line);
     border-radius: 7px; padding: 6px 4px; font: inherit; cursor: pointer;
   }
   .seg button.on { background: var(--accent); color: #fff; border-color: var(--accent); }
-  .checks { display: flex; flex-wrap: wrap; gap: 14px; }
-  .checks label { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); font-size: 12px; cursor: pointer; }
   .presets { display: flex; gap: 8px; margin-bottom: 16px; }
-  .presets button {
-    flex: 1; background: var(--panel-2); color: var(--text); border: 1px solid var(--line);
-    border-radius: 8px; padding: 8px 6px; font: inherit; cursor: pointer;
-  }
+  .presets button { flex: 1; background: var(--panel-2); color: var(--text); border: 1px solid var(--line); border-radius: 8px; padding: 8px 6px; font: inherit; cursor: pointer; }
   .presets button:hover { border-color: var(--accent); }
 
-  /* ---- stage ---- */
   .stage { padding: 28px; display: flex; flex-direction: column; gap: 22px; align-items: flex-start; }
   .stage .cap { color: var(--muted); font-size: 12px; margin-bottom: 8px; }
   .board {
     width: 380px; max-width: 100%; min-height: 300px; border-radius: 14px; overflow: hidden;
-    box-shadow: 0 20px 60px rgba(0,0,0,.5); border: 1px solid var(--line);
-    resize: horizontal; /* 讓你拖看不同寬度 */
+    box-shadow: 0 20px 60px rgba(0,0,0,.5); border: 1px solid var(--line); resize: horizontal;
   }
-  .compare { display: flex; gap: 22px; flex-wrap: wrap; align-items: flex-start; }
-  .old-board {
-    width: 300px; min-height: 240px; border-radius: 14px; overflow: hidden; border: 1px solid var(--line);
-    background: #111827; box-shadow: 0 20px 60px rgba(0,0,0,.5);
-  }
+  .old-board { width: 300px; min-height: 240px; border-radius: 14px; overflow: hidden; border: 1px solid var(--line); background: #111827; box-shadow: 0 20px 60px rgba(0,0,0,.5); }
 
-  /* ---- guide widget (預覽本體) ---- */
+  /* guide widget — mirrors the shipped renderer */
   .guide { height: 100%; display: flex; flex-direction: column; justify-content: center; gap: var(--rowgap); padding: 18px 20px; font-family: system-ui, "Noto Sans CJK TC", sans-serif; }
-  .guide.grid { display: grid; grid-template-columns: 1fr 1fr; align-content: center; }
-  .guide .title { font-weight: 800; opacity: .9; letter-spacing: .04em; margin-bottom: 6px; }
-  .row { display: flex; align-items: center; gap: 14px; padding: 6px 4px; }
-  .label-wrap { display: flex; flex-direction: column; min-width: 0; }
-  .label { font-weight: 800; line-height: 1.1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .sub { font-weight: 600; opacity: .62; line-height: 1.1; margin-top: 2px; }
+  .row { display: grid; align-items: center; }
+  .arrow { display: flex; }
+  .label { text-align: center; font-weight: 800; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; line-height: 1.1; }
 
-  /* 現況對照（Unicode 細箭頭） */
   .old-guide { height: 100%; display: flex; flex-direction: column; justify-content: center; gap: 6px; padding: 18px 20px; color: #fff; font-family: system-ui, sans-serif; }
   .old-row { display: flex; align-items: center; gap: 10px; font-size: 40px; font-weight: 600; }
 </style>
@@ -80,12 +61,12 @@
 <body>
   <aside class="controls">
     <h1>動線指示 · 樣式預覽</h1>
-    <p class="hint">拖動下面的參數即時預覽。右側是新版 SVG 箭頭，最下方灰卡是目前線上的 Unicode 細箭頭對照。</p>
+    <p class="hint">箭頭在左或右側可獨立設定；文字在左右各預留一個指標欄寬後置中對齊。最下方灰卡是現況 Unicode 細箭頭對照。</p>
 
     <div class="presets">
       <button data-preset="board">看板推薦</button>
       <button data-preset="minimal">簡約線條</button>
-      <button data-preset="zone">分區色</button>
+      <button data-preset="zone">實心三角</button>
     </div>
 
     <div class="group">
@@ -98,43 +79,21 @@
           <button data-v="line">線條</button>
         </div>
       </div>
+      <div class="field"><label>指標位置</label>
+        <div class="seg" id="seg-pos">
+          <button data-v="left">靠左</button>
+          <button data-v="right">靠右</button>
+        </div>
+      </div>
       <div class="field range"><label>粗細</label><input type="range" id="weight" min="2" max="16" step="1"><span class="val" id="weight-v"></span></div>
       <div class="field range"><label>尺寸 ×字級</label><input type="range" id="asize" min="0.8" max="2.2" step="0.1"><span class="val" id="asize-v"></span></div>
       <div class="field"><label>箭頭色</label><input type="color" id="acolor"></div>
-      <div class="field"><label>位置</label>
-        <div class="seg" id="seg-pos">
-          <button data-v="auto">自動</button>
-          <button data-v="leading">前置</button>
-          <button data-v="trailing">後置</button>
-        </div>
-      </div>
     </div>
 
     <div class="group">
       <div class="gt">版面</div>
       <div class="field range"><label>字級</label><input type="range" id="fsize" min="24" max="72" step="2"><span class="val" id="fsize-v"></span></div>
       <div class="field range"><label>列間距</label><input type="range" id="rowgap" min="0" max="28" step="2"><span class="val" id="rowgap-v"></span></div>
-      <div class="field"><label>對齊</label>
-        <div class="seg" id="seg-align">
-          <button data-v="spread">兩端</button>
-          <button data-v="left">靠左</button>
-          <button data-v="center">置中</button>
-          <button data-v="right">靠右</button>
-        </div>
-      </div>
-      <div class="field"><label>標題</label><input type="text" id="title" placeholder="（可留空）"></div>
-      <div class="field"><label>版型</label>
-        <div class="seg" id="seg-layout">
-          <button data-v="list">單欄</button>
-          <button data-v="grid">雙欄</button>
-        </div>
-      </div>
-      <div class="field" style="grid-template-columns:1fr">
-        <div class="checks">
-          <label><input type="checkbox" id="divider"> 分隔線</label>
-          <label><input type="checkbox" id="zebra"> 斑馬紋</label>
-        </div>
-      </div>
     </div>
 
     <div class="group">
@@ -149,40 +108,35 @@
       <div class="cap">新版預覽（可拖右下角改寬度）</div>
       <div class="board" id="board"></div>
     </div>
-    <div class="compare">
-      <div>
-        <div class="cap">現況對照 · Unicode 細箭頭</div>
-        <div class="old-board"><div class="old-guide" id="old"></div></div>
-      </div>
+    <div>
+      <div class="cap">現況對照 · Unicode 細箭頭</div>
+      <div class="old-board"><div class="old-guide" id="old"></div></div>
     </div>
   </main>
 
 <script>
-  // ---- sample entries：含斜角、sub_label、分區色 ----
   const ENTRIES = [
-    { label: "大會議室", sub: "3F", arrow: "up-right" },
-    { label: "洗手間",   sub: "本層", arrow: "left" },
-    { label: "電梯",     sub: "",     arrow: "right" },
-    { label: "服務台",   sub: "1F 大廳", arrow: "down" },
-    { label: "緊急出口", sub: "安全門", arrow: "down-left", color: "#f87171" },
+    { label: "大會議室", arrow: "up-right" },
+    { label: "洗手間",   arrow: "left" },
+    { label: "電梯",     arrow: "right" },
+    { label: "服務台",   arrow: "down" },
+    { label: "緊急出口", arrow: "down-left" },
   ];
 
   const ANGLE = { right:0, "down-right":45, down:90, "down-left":135, left:180, "up-left":225, up:270, "up-right":315 };
   const GLYPH = { up:"↑", down:"↓", left:"←", right:"→", "up-left":"↖", "up-right":"↗", "down-left":"↙", "down-right":"↘" };
 
   const cfg = {
-    arrow_style: "block", arrow_weight: 10, arrow_size: 1.3, arrow_color: "#ffd24a", arrow_position: "auto",
-    font_size: 44, row_gap: 8, align: "spread", title: "樓層導引", layout: "list",
-    divider: true, zebra: false, color: "#ffffff", background: "#111827",
+    arrow_style: "block", arrow_weight: 10, arrow_size: 1.3, arrow_color: "#ffd24a", arrow_position: "right",
+    font_size: 44, row_gap: 8, color: "#ffffff", background: "#111827",
   };
 
   const PRESETS = {
-    board:   { arrow_style:"block",    arrow_weight:10, arrow_size:1.3, arrow_color:"#ffd24a", arrow_position:"auto", font_size:44, row_gap:8,  align:"spread", divider:true,  zebra:false, title:"樓層導引", layout:"list", color:"#ffffff", background:"#111827" },
-    minimal: { arrow_style:"line",     arrow_weight:8,  arrow_size:1.1, arrow_color:"#4f8cff", arrow_position:"auto", font_size:40, row_gap:12, align:"left",   divider:false, zebra:false, title:"",        layout:"list", color:"#e7e9ee", background:"#0b0e14" },
-    zone:    { arrow_style:"triangle", arrow_weight:10, arrow_size:1.2, arrow_color:"#22c55e", arrow_position:"trailing", font_size:42, row_gap:6, align:"spread", divider:false, zebra:true,  title:"",     layout:"list", color:"#ffffff", background:"#14181f" },
+    board:   { arrow_style:"block",    arrow_weight:10, arrow_size:1.3, arrow_color:"#ffd24a", arrow_position:"right", font_size:44, row_gap:8,  color:"#ffffff", background:"#111827" },
+    minimal: { arrow_style:"line",     arrow_weight:8,  arrow_size:1.1, arrow_color:"#4f8cff", arrow_position:"right", font_size:40, row_gap:12, color:"#e7e9ee", background:"#0b0e14" },
+    zone:    { arrow_style:"triangle", arrow_weight:10, arrow_size:1.2, arrow_color:"#22c55e", arrow_position:"left",  font_size:42, row_gap:6,  color:"#ffffff", background:"#14181f" },
   };
 
-  // ---- SVG 箭頭：一個右向形狀 + 旋轉，涵蓋 8 方向 ----
   function arrowSVG(dir, style, weight, sizePx, color) {
     const a = ANGLE[dir] ?? 0;
     let inner;
@@ -192,64 +146,44 @@
       inner = `<path d="M40,20 L76,50 L40,80" fill="none" stroke="${color}" stroke-width="${weight+2}" stroke-linecap="round" stroke-linejoin="round"/>`;
     } else if (style === "triangle") {
       inner = `<path d="M32,18 L84,50 L32,82 Z" fill="${color}"/>`;
-    } else { // block
+    } else {
       const half = Math.min(24, 5 + weight * 1.5);
       inner = `<path d="M12,${50-half} L54,${50-half} L54,22 L88,50 L54,78 L54,${50+half} L12,${50+half} Z" fill="${color}"/>`;
     }
-    return `<svg viewBox="0 0 100 100" width="${sizePx}" height="${sizePx}" style="flex:0 0 auto;display:block"><g transform="rotate(${a} 50 50)">${inner}</g></svg>`;
+    return `<svg viewBox="0 0 100 100" width="${sizePx}" height="${sizePx}" style="display:block"><g transform="rotate(${a} 50 50)">${inner}</g></svg>`;
   }
-
-  function arrowFirst(dir) {
-    if (cfg.arrow_position === "leading") return true;
-    if (cfg.arrow_position === "trailing") return false;
-    return dir.includes("left") || dir === "up" || dir === "down"; // auto
-  }
-  const JUSTIFY = { spread:"space-between", left:"flex-start", center:"center", right:"flex-end" };
 
   function render() {
     const board = document.getElementById("board");
     board.style.background = cfg.background;
     const box = document.createElement("div");
-    box.className = "guide" + (cfg.layout === "grid" ? " grid" : "");
+    box.className = "guide";
     box.style.setProperty("--rowgap", cfg.row_gap + "px");
     box.style.color = cfg.color;
 
-    if (cfg.title) {
-      const t = document.createElement("div");
-      t.className = "title"; t.textContent = cfg.title;
-      t.style.fontSize = Math.round(cfg.font_size * 0.5) + "px";
-      box.appendChild(t);
-    }
+    const arrowPx = Math.round(cfg.font_size * cfg.arrow_size);
+    const gap = Math.round(cfg.font_size * 0.3);
+    const pos = cfg.arrow_position;
 
-    ENTRIES.forEach((e, i) => {
+    ENTRIES.forEach((e) => {
       const row = document.createElement("div");
       row.className = "row";
-      row.style.justifyContent = JUSTIFY[cfg.align];
-      if (cfg.divider && i < ENTRIES.length - 1) row.style.borderBottom = "1px solid rgba(255,255,255,.14)";
-      if (cfg.zebra && i % 2 === 1) row.style.background = "rgba(255,255,255,.06)";
-
-      const rowColor = e.color || cfg.color;
-      const aColor = e.color || cfg.arrow_color || cfg.color;
+      row.style.gridTemplateColumns = `${arrowPx}px 1fr ${arrowPx}px`;
+      row.style.columnGap = gap + "px";
 
       const arrow = document.createElement("span");
-      arrow.innerHTML = arrowSVG(e.arrow, cfg.arrow_style, cfg.arrow_weight, cfg.font_size * cfg.arrow_size, aColor);
+      arrow.className = "arrow";
+      arrow.style.justifyContent = pos === "left" ? "flex-start" : "flex-end";
+      arrow.innerHTML = arrowSVG(e.arrow, cfg.arrow_style, cfg.arrow_weight, arrowPx, cfg.arrow_color || cfg.color);
 
-      const lw = document.createElement("div");
-      lw.className = "label-wrap";
-      lw.style.alignItems = arrowFirst(e.arrow) ? "flex-start" : "flex-end";
-      const main = document.createElement("div");
-      main.className = "label"; main.textContent = e.label;
-      main.style.color = rowColor; main.style.fontSize = cfg.font_size + "px";
-      lw.appendChild(main);
-      if (e.sub) {
-        const s = document.createElement("div");
-        s.className = "sub"; s.textContent = e.sub; s.style.color = rowColor;
-        s.style.fontSize = Math.round(cfg.font_size * 0.42) + "px";
-        lw.appendChild(s);
-      }
+      const label = document.createElement("span");
+      label.className = "label";
+      label.textContent = e.label;
+      label.style.fontSize = cfg.font_size + "px";
 
-      if (arrowFirst(e.arrow)) { row.appendChild(arrow); row.appendChild(lw); }
-      else { row.appendChild(lw); row.appendChild(arrow); }
+      const spacer = document.createElement("span");
+      if (pos === "left") { row.append(arrow, label, spacer); }
+      else { row.append(spacer, label, arrow); }
       box.appendChild(row);
     });
 
@@ -257,7 +191,6 @@
     renderOld();
   }
 
-  // 現況：Unicode 細箭頭 + label，字重靠字型
   function renderOld() {
     const old = document.getElementById("old");
     old.replaceChildren();
@@ -269,7 +202,6 @@
     });
   }
 
-  // ---- 綁定控制項 ----
   function syncUI() {
     document.getElementById("weight").value = cfg.arrow_weight;
     document.getElementById("weight-v").textContent = cfg.arrow_weight;
@@ -280,19 +212,12 @@
     document.getElementById("fsize-v").textContent = cfg.font_size;
     document.getElementById("rowgap").value = cfg.row_gap;
     document.getElementById("rowgap-v").textContent = cfg.row_gap;
-    document.getElementById("title").value = cfg.title;
-    document.getElementById("divider").checked = cfg.divider;
-    document.getElementById("zebra").checked = cfg.zebra;
     document.getElementById("color").value = cfg.color;
     document.getElementById("background").value = cfg.background;
     setSeg("seg-style", cfg.arrow_style);
     setSeg("seg-pos", cfg.arrow_position);
-    setSeg("seg-align", cfg.align);
-    setSeg("seg-layout", cfg.layout);
   }
-  function setSeg(id, v) {
-    document.querySelectorAll(`#${id} button`).forEach(b => b.classList.toggle("on", b.dataset.v === v));
-  }
+  function setSeg(id, v) { document.querySelectorAll(`#${id} button`).forEach(b => b.classList.toggle("on", b.dataset.v === v)); }
   function bindSeg(id, key) {
     document.getElementById(id).addEventListener("click", (ev) => {
       const b = ev.target.closest("button"); if (!b) return;
@@ -309,8 +234,6 @@
 
   bindSeg("seg-style", "arrow_style");
   bindSeg("seg-pos", "arrow_position");
-  bindSeg("seg-align", "align");
-  bindSeg("seg-layout", "layout");
   bindRange("weight", "arrow_weight", false);
   bindRange("asize", "arrow_size", true);
   bindRange("fsize", "font_size", false);
@@ -318,9 +241,6 @@
   document.getElementById("acolor").addEventListener("input", e => { cfg.arrow_color = e.target.value; render(); });
   document.getElementById("color").addEventListener("input", e => { cfg.color = e.target.value; render(); });
   document.getElementById("background").addEventListener("input", e => { cfg.background = e.target.value; render(); });
-  document.getElementById("title").addEventListener("input", e => { cfg.title = e.target.value; render(); });
-  document.getElementById("divider").addEventListener("change", e => { cfg.divider = e.target.checked; render(); });
-  document.getElementById("zebra").addEventListener("change", e => { cfg.zebra = e.target.checked; render(); });
   document.querySelectorAll(".presets button").forEach(b => b.addEventListener("click", () => {
     Object.assign(cfg, PRESETS[b.dataset.preset]); syncUI(); render();
   }));

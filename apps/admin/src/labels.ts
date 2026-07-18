@@ -140,6 +140,56 @@ export const directionArrowLabels: Record<string, string> = {
   "down-right": "右下 ↘",
 };
 
+export const directionArrowStyleLabels: Record<string, string> = {
+  block: "粗塊",
+  triangle: "實心三角",
+  chevron: "V 形",
+  line: "線條",
+};
+
+export const directionArrowPositionLabels: Record<string, string> = {
+  left: "靠左",
+  right: "靠右",
+};
+
+// Base arrow shape points right; other directions are the same shape rotated.
+const directionArrowAngle: Record<string, number> = {
+  right: 0,
+  "down-right": 45,
+  down: 90,
+  "down-left": 135,
+  left: 180,
+  "up-left": 225,
+  up: 270,
+  "up-right": 315,
+};
+
+/**
+ * Build an inline SVG string for a wayfinding arrow. Shared verbatim (in spirit)
+ * with the standalone/agent players so the editor preview matches playback.
+ */
+export function directionArrowSvg(
+  arrow: string,
+  style: string,
+  weight: number,
+  sizePx: number,
+  color: string,
+): string {
+  const a = directionArrowAngle[arrow] ?? 0;
+  let inner: string;
+  if (style === "line") {
+    inner = `<path d="M16,50 L74,50 M54,28 L80,50 L54,72" fill="none" stroke="${color}" stroke-width="${weight}" stroke-linecap="round" stroke-linejoin="round"/>`;
+  } else if (style === "chevron") {
+    inner = `<path d="M40,20 L76,50 L40,80" fill="none" stroke="${color}" stroke-width="${weight + 2}" stroke-linecap="round" stroke-linejoin="round"/>`;
+  } else if (style === "triangle") {
+    inner = `<path d="M32,18 L84,50 L32,82 Z" fill="${color}"/>`;
+  } else {
+    const half = Math.min(24, 5 + weight * 1.5);
+    inner = `<path d="M12,${50 - half} L54,${50 - half} L54,22 L88,50 L54,78 L54,${50 + half} L12,${50 + half} Z" fill="${color}"/>`;
+  }
+  return `<svg viewBox="0 0 100 100" width="${sizePx}" height="${sizePx}" style="display:block"><g transform="rotate(${a} 50 50)">${inner}</g></svg>`;
+}
+
 export const clockFormatLabels: Record<string, string> = {
   "24h": "24 小時制",
   "12h": "12 小時制",

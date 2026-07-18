@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { contentUrl, scenesApi } from "../api";
 import type { SceneDetailResponse, SceneVersionRow, WidgetInput } from "../api";
@@ -25,8 +25,10 @@ import {
   clockDateFormatLabels,
   clockFormatLabels,
   clockLocaleLabels,
-  directionArrowGlyphs,
   directionArrowLabels,
+  directionArrowPositionLabels,
+  directionArrowStyleLabels,
+  directionArrowSvg,
   label,
   objectFitLabels,
   sceneStatusLabels,
@@ -154,6 +156,11 @@ function defaultConfig(kind: WidgetKind): WidgetConfig {
         color: "#ffffff",
         background: "#111827",
         font_size: 40,
+        arrow_style: "block",
+        arrow_weight: 10,
+        arrow_size: 1.2,
+        arrow_color: "#ffd24a",
+        arrow_position: "right",
       } as DirectionWidgetConfig;
     case "clock":
       return {
@@ -320,22 +327,39 @@ export default function SceneEditor() {
   }, [data]);
 
   // ---- canvas scaling ----
-  const wrapRef = useRef<HTMLDivElement>(null);
   const [wrapW, setWrapW] = useState(800);
   const [maxH, setMaxH] = useState(() => Math.max(320, window.innerHeight * 0.6));
 
-  useEffect(() => {
-    const el = wrapRef.current;
-    if (!el) return;
+  // Callback ref rather than useRef + mount effect: the canvas card is rendered
+  // only after `data` loads (see the early return below), which is *after* the
+  // first commit. A one-shot effect would find the ref still null and never
+  // observe anything, leaving wrapW pinned at its default so the preview never
+  // rescaled. A callback ref attaches the observer the moment the card mounts.
+  const roRef = useRef<ResizeObserver | null>(null);
+  const setWrapEl = useCallback((el: HTMLDivElement | null) => {
+    roRef.current?.disconnect();
+    if (!el) {
+      roRef.current = null;
+      return;
+    }
     const ro = new ResizeObserver((entries) => {
       for (const e of entries) setWrapW(e.contentRect.width);
     });
     ro.observe(el);
-    return () => ro.disconnect();
+    roRef.current = ro;
   }, []);
 
   useEffect(() => {
-    const onResize = () => setMaxH(Math.max(320, window.innerHeight * 0.6));
+    // Recompute the height cap only when the viewport *width* changes (a real
+    // resize / orientation change). Scrolling on mobile shows/hides the browser
+    // chrome, which changes innerHeight and fires "resize" — reacting to that
+    // would make the preview continuously rescale while the user scrolls.
+    let lastW = window.innerWidth;
+    const onResize = () => {
+      if (window.innerWidth === lastW) return;
+      lastW = window.innerWidth;
+      setMaxH(Math.max(320, window.innerHeight * 0.6));
+    };
     window.addEventListener("resize", onResize);
     return () => window.removeEventListener("resize", onResize);
   }, []);
@@ -813,9 +837,9 @@ export default function SceneEditor() {
         </div>
       )}
 
-      <div className="grid gap-4 lg:grid-cols-[1fr_340px]">
+      <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_340px]">
         {/* canvas column */}
-        <div className="space-y-3">
+        <div className="min-w-0 space-y-3">
           {/* resolution presets */}
           <div className="card flex flex-wrap items-end gap-3">
             <div>
@@ -867,7 +891,7 @@ export default function SceneEditor() {
           </div>
 
           {/* the canvas */}
-          <div ref={wrapRef} className="card overflow-hidden">
+          <div ref={setWrapEl} className="card overflow-hidden">
             <div
               className="relative mx-auto select-none overflow-hidden shadow-inner"
               style={{ width: safeW * scale, height: safeH * scale, background: bgColor }}
@@ -1361,28 +1385,62 @@ function WidgetView({
     }
     case "direction": {
       const cfg = w.config as DirectionWidgetConfig;
+      const fs = cfg.font_size ?? 32;
+      const style = cfg.arrow_style ?? "block";
+      const weight = cfg.arrow_weight ?? 10;
+      const arrowColor = cfg.arrow_color || cfg.color || "#ffffff";
+      const pos = cfg.arrow_position ?? "right";
+      const arrowPx = fs * (cfg.arrow_size ?? 1.2) * scale;
+      const gap = fs * 0.3 * scale;
       return (
         <div
           style={{
             ...box,
             background: cfg.background || "#111827",
             color: cfg.color || "#ffffff",
-            fontSize: Math.max(4, (cfg.font_size ?? 32) * scale),
+            fontSize: Math.max(4, fs * scale),
             padding: 8 * scale,
             display: "flex",
             flexDirection: "column",
             justifyContent: "center",
-            gap: 4 * scale,
+            gap: 6 * scale,
           }}
         >
-          {(cfg.entries ?? []).map((e, i) => (
-            <div key={i} style={{ display: "flex", alignItems: "center", gap: 8 * scale }}>
-              <span>{directionArrowGlyphs[e.arrow] ?? "→"}</span>
-              <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                {e.label}
-              </span>
-            </div>
-          ))}
+          {(cfg.entries ?? []).map((e, i) => {
+            const arrow = (
+              <span
+                style={{ display: "flex", justifyContent: pos === "left" ? "flex-start" : "flex-end" }}
+                dangerouslySetInnerHTML={{
+                  __html: directionArrowSvg(e.arrow, style, weight, arrowPx, arrowColor),
+                }}
+              />
+            );
+            return (
+              <div
+                key={i}
+                style={{
+                  display: "grid",
+                  gridTemplateColumns: `${arrowPx}px 1fr ${arrowPx}px`,
+                  alignItems: "center",
+                  columnGap: gap,
+                }}
+              >
+                {pos === "left" ? arrow : <span />}
+                <span
+                  style={{
+                    textAlign: "center",
+                    fontWeight: 800,
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                    whiteSpace: "nowrap",
+                  }}
+                >
+                  {e.label}
+                </span>
+                {pos === "right" ? arrow : <span />}
+              </div>
+            );
+          })}
         </div>
       );
     }
@@ -1521,6 +1579,8 @@ const WEB_MODE_OPTS: [string, string][] = Object.entries(webModeLabels);
 const ALIGN_OPTS: [string, string][] = Object.entries(alignLabels);
 const TICKER_DIR_OPTS: [string, string][] = Object.entries(tickerDirectionLabels);
 const ARROW_OPTS: [string, string][] = Object.entries(directionArrowLabels);
+const ARROW_STYLE_OPTS: [string, string][] = Object.entries(directionArrowStyleLabels);
+const ARROW_POS_OPTS: [string, string][] = Object.entries(directionArrowPositionLabels);
 const CLOCK_FMT_OPTS: [string, string][] = Object.entries(clockFormatLabels);
 const CLOCK_LOCALE_OPTS: [string, string][] = Object.entries(clockLocaleLabels);
 const CLOCK_DATE_FORMAT_OPTS: [string, string][] = Object.entries(clockDateFormatLabels);
@@ -1900,6 +1960,43 @@ function DirectionForm({
           </button>
         )}
       </div>
+      <SelectField
+        label="箭頭樣式"
+        value={cfg.arrow_style ?? "block"}
+        options={ARROW_STYLE_OPTS}
+        disabled={disabled}
+        onChange={(v) => onChange({ ...cfg, arrow_style: v as DirectionWidgetConfig["arrow_style"] })}
+      />
+      <SelectField
+        label="指標位置"
+        value={cfg.arrow_position ?? "right"}
+        options={ARROW_POS_OPTS}
+        disabled={disabled}
+        onChange={(v) =>
+          onChange({ ...cfg, arrow_position: v as DirectionWidgetConfig["arrow_position"] })
+        }
+      />
+      <NumberField
+        label="箭頭粗細"
+        value={cfg.arrow_weight ?? 10}
+        min={1}
+        disabled={disabled}
+        onChange={(v) => onChange({ ...cfg, arrow_weight: v })}
+      />
+      <NumberField
+        label="箭頭尺寸 (×字級)"
+        value={cfg.arrow_size ?? 1.2}
+        min={0.5}
+        step={0.1}
+        disabled={disabled}
+        onChange={(v) => onChange({ ...cfg, arrow_size: v })}
+      />
+      <ColorField
+        label="箭頭顏色"
+        value={cfg.arrow_color ?? cfg.color ?? "#ffffff"}
+        disabled={disabled}
+        onChange={(v) => onChange({ ...cfg, arrow_color: v || undefined })}
+      />
       <NumberField
         label="字級 (px)"
         value={cfg.font_size ?? 32}

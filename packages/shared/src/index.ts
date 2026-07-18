@@ -251,11 +251,24 @@ export interface DirectionEntry {
   arrow: DirectionArrow;
 }
 
+/** Visual style of the wayfinding arrow drawn as SVG. */
+export type DirectionArrowStyle = "block" | "triangle" | "chevron" | "line";
+
 export interface DirectionWidgetConfig {
   entries: DirectionEntry[];
   color?: string;
   background?: string;
   font_size?: number;
+  /** Arrow shape; defaults to "block". */
+  arrow_style?: DirectionArrowStyle;
+  /** Stroke thickness for the "line"/"chevron" styles. */
+  arrow_weight?: number;
+  /** Arrow box size as a multiple of font_size (defaults to 1.2). */
+  arrow_size?: number;
+  /** Arrow colour; falls back to `color` when unset. */
+  arrow_color?: string;
+  /** Which side the indicator column sits on; defaults to "right". */
+  arrow_position?: "left" | "right";
 }
 
 export interface ClockWidgetConfig {

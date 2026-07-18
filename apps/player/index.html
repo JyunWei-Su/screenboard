@@ -32,9 +32,10 @@
   .ticker-content { white-space: nowrap; will-change: transform; }
   .clock { display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100%; text-align: center; font-family: system-ui, sans-serif; }
   .clock-date { opacity: .8; }
-  .direction { display: flex; flex-direction: column; justify-content: center; height: 100%; gap: .25em; font-family: system-ui, sans-serif; }
-  .direction-row { display: flex; align-items: center; gap: .4em; }
-  .direction-arrow { flex: 0 0 auto; }
+  .direction { display: flex; flex-direction: column; justify-content: center; height: 100%; gap: .3em; font-family: system-ui, sans-serif; }
+  .direction-row { display: grid; align-items: center; }
+  .direction-arrow { display: flex; }
+  .direction-label { text-align: center; font-weight: 800; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .text-widget { display: flex; height: 100%; box-sizing: border-box; padding: .3em; font-family: system-ui, sans-serif; }
   .text-widget > div { white-space: pre-wrap; overflow-wrap: anywhere; }
   #msg, #idle {
@@ -76,9 +77,6 @@
   const WIDGET_TIMEOUT = 6000;
   const WEB_TIMEOUT = 9000;
   const REVEAL_TIMEOUT = 10000;
-
-  const ARROWS = { up:'↑', down:'↓', left:'←', right:'→',
-    'up-left':'↖', 'up-right':'↗', 'down-left':'↙', 'down-right':'↘' };
 
   // No local /event endpoint in preview mode.
   function report() {}
@@ -271,6 +269,25 @@
     return '';
   }
 
+  // Base arrow shape points right; other directions are the same shape rotated.
+  const DIR_ANGLE = { right:0, 'down-right':45, down:90, 'down-left':135,
+    left:180, 'up-left':225, up:270, 'up-right':315 };
+  function directionArrowSVG(dir, style, weight, sizePx, color) {
+    const a = DIR_ANGLE[dir] || 0;
+    let inner;
+    if (style === 'line') {
+      inner = '<path d="M16,50 L74,50 M54,28 L80,50 L54,72" fill="none" stroke="' + color + '" stroke-width="' + weight + '" stroke-linecap="round" stroke-linejoin="round"/>';
+    } else if (style === 'chevron') {
+      inner = '<path d="M40,20 L76,50 L40,80" fill="none" stroke="' + color + '" stroke-width="' + (weight + 2) + '" stroke-linecap="round" stroke-linejoin="round"/>';
+    } else if (style === 'triangle') {
+      inner = '<path d="M32,18 L84,50 L32,82 Z" fill="' + color + '"/>';
+    } else {
+      const half = Math.min(24, 5 + weight * 1.5);
+      inner = '<path d="M12,' + (50 - half) + ' L54,' + (50 - half) + ' L54,22 L88,50 L54,78 L54,' + (50 + half) + ' L12,' + (50 + half) + ' Z" fill="' + color + '"/>';
+    }
+    return '<svg viewBox="0 0 100 100" width="' + sizePx + '" height="' + sizePx + '" style="display:block"><g transform="rotate(' + a + ' 50 50)">' + inner + '</g></svg>';
+  }
+
   function buildDirection(wg) {
     const cfg = wg.config || {};
     const entries = Array.isArray(cfg.entries) ? cfg.entries : [];
@@ -278,17 +295,29 @@
     box.className = 'direction';
     if (cfg.background) box.style.background = cfg.background;
     box.style.color = cfg.color || '#fff';
-    box.style.fontSize = (cfg.font_size || Math.round(wg.height / Math.max(2, entries.length + 1))) + 'px';
+    const fs = cfg.font_size || Math.round(wg.height / Math.max(2, entries.length + 1));
+    box.style.fontSize = fs + 'px';
+    const style = cfg.arrow_style || 'block';
+    const weight = cfg.arrow_weight || 10;
+    const color = cfg.arrow_color || cfg.color || '#fff';
+    const pos = cfg.arrow_position === 'left' ? 'left' : 'right';
+    const arrowPx = Math.round(fs * (cfg.arrow_size || 1.2));
+    const gap = Math.round(fs * 0.3);
     for (const e of entries) {
       const row = document.createElement('div');
       row.className = 'direction-row';
+      row.style.gridTemplateColumns = arrowPx + 'px 1fr ' + arrowPx + 'px';
+      row.style.columnGap = gap + 'px';
       const ar = document.createElement('span');
       ar.className = 'direction-arrow';
-      ar.textContent = ARROWS[e.arrow] || '→';
+      ar.style.justifyContent = pos === 'left' ? 'flex-start' : 'flex-end';
+      ar.innerHTML = directionArrowSVG(e.arrow, style, weight, arrowPx, color);
       const lb = document.createElement('span');
       lb.className = 'direction-label';
       lb.textContent = e.label || '';
-      row.appendChild(ar); row.appendChild(lb);
+      const spacer = document.createElement('span');
+      if (pos === 'left') { row.appendChild(ar); row.appendChild(lb); row.appendChild(spacer); }
+      else { row.appendChild(spacer); row.appendChild(lb); row.appendChild(ar); }
       box.appendChild(row);
     }
     return { el: box, ready: Promise.resolve() };

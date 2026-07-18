@@ -33,7 +33,7 @@ func (a *Agent) Run() {
 	a.player.onPlayback = func(ev PlaybackEvent) { a.ws.SendPlayback(ev) }
 	a.player.StartServer()
 	a.player.waitForServer()
-	a.syncPlaylist() // fetch before first paint
+	a.syncTarget() // fetch before first paint
 	a.player.LaunchChromium()
 
 	// Enrollment runs before X11 starts, so collect resolution again once the
@@ -42,7 +42,7 @@ func (a *Agent) Run() {
 	go a.loop(5*time.Minute, a.reportDeviceInfo)
 
 	go a.loop(time.Duration(a.cfg.HealthInterval)*time.Second, a.reportHealth)
-	go a.loop(time.Duration(a.cfg.PlaylistPoll)*time.Second, a.syncPlaylist)
+	go a.loop(time.Duration(a.cfg.PlaylistPoll)*time.Second, a.syncTarget)
 	// Automatic screenshots are opt-in. A non-positive interval disables them;
 	// administrators can still request a screenshot manually from the console.
 	if a.cfg.ScreenshotEvery > 0 {
@@ -140,6 +140,18 @@ func (a *Agent) reportHealth() {
 	}
 }
 
+// syncTarget fetches the device's single effective target (playlist / scene /
+// scene_playlist). If the target endpoint is unavailable (older API), it falls
+// back to the legacy playlist poll so back-compat behaviour is preserved.
+func (a *Agent) syncTarget() {
+	t, err := a.client.GetTarget()
+	if err != nil {
+		a.syncPlaylist()
+		return
+	}
+	a.player.SetTarget(t)
+}
+
 func (a *Agent) syncPlaylist() {
 	pl, err := a.client.GetPlaylist()
 	if err != nil {
@@ -184,8 +196,8 @@ func (a *Agent) handleCommand(cmd ServerCommand) (bool, string) {
 		a.player.Notify("正在重新啟動播放器…", "warning", true)
 		a.player.LaunchChromium()
 		go a.notifyAfter("播放器已重新啟動", "success", time.Second)
-	case "switch_playlist":
-		a.syncPlaylist()
+	case "switch_playlist", "switch_scene":
+		a.syncTarget()
 	case "take_screenshot":
 		a.captureAndPost("manual")
 	case "check_update":
@@ -200,6 +212,15 @@ func (a *Agent) handleCommand(cmd ServerCommand) (bool, string) {
 		if !updated {
 			a.player.Notify("已是最新版本", "success", false)
 		}
+	case "sync_time":
+		a.player.Notify("正在透過 NTP 對時…", "warning", true)
+		detail, err := SyncTime()
+		if err != nil {
+			a.player.Notify("NTP 對時失敗："+err.Error(), "error", false)
+			return false, err.Error()
+		}
+		a.player.Notify("NTP 對時已啟用", "success", false)
+		return true, detail
 	case "reboot":
 		a.player.Notify("裝置即將重新啟動…", "warning", true)
 		time.Sleep(1500 * time.Millisecond)

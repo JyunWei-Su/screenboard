@@ -104,6 +104,20 @@ export class DeviceConnection {
         .run();
     } else if (msg.type === "playback") {
       const uuid = (await this.state.storage.get<string>("uuid")) ?? null;
+      // A scene report is operational state, not merely an ephemeral event.
+      // Keep its revision and per-widget failures with the device record so an
+      // operator can correlate the current screen (and screenshots) with it.
+      if (uuid) {
+        await this.env.DB.prepare(
+          `UPDATE devices SET active_scene_id = ?, active_scene_version = ?,
+           widget_errors = ?, playback_updated_at = datetime('now') WHERE uuid = ?`,
+        ).bind(
+          msg.scene_id ?? null,
+          msg.scene_version ?? null,
+          msg.widget_errors ? JSON.stringify(msg.widget_errors) : null,
+          uuid,
+        ).run();
+      }
       if (msg.black_screen) {
         await recordEvent(this.env, {
           type: "screenshot_error",

@@ -7,12 +7,38 @@
 <style>
   html, body { margin: 0; height: 100%; background: #000; overflow: hidden; }
   #stage { position: fixed; inset: 0; background: #000; }
-  #stage > * {
+
+  /* Legacy single-item playlist elements are appended directly to #stage. */
+  .pl-item {
     position: absolute; inset: 0; width: 100%; height: 100%;
     border: 0; object-fit: contain; background: #000;
   }
+
+  /* A whole scene renders inside one layer so it can be swapped atomically. */
+  .scene-layer { position: fixed; inset: 0; background: transparent; }
+  .scene-canvas { position: absolute; top: 0; left: 0; transform-origin: top left; overflow: hidden; background: transparent; }
+  .scene-bg { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; z-index: 0; }
+  .widget { position: absolute; overflow: hidden; }
+  .widget > * { width: 100%; height: 100%; box-sizing: border-box; }
+  .widget img, .widget video { display: block; width: 100%; height: 100%; object-fit: contain; }
+  .widget iframe { width: 100%; height: 100%; border: 0; }
+  .widget-error {
+    position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+    text-align: center; padding: 8px; box-sizing: border-box; color: #fca5a5;
+    background: rgba(20, 20, 24, .82);
+    font: 600 clamp(12px, 2.2vw, 22px)/1.35 "Noto Sans CJK TC", system-ui, sans-serif;
+  }
+  .ticker-wrap { position: absolute; inset: 0; overflow: hidden; display: flex; align-items: center; }
+  .ticker-content { white-space: nowrap; will-change: transform; }
+  .clock { display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100%; text-align: center; font-family: system-ui, sans-serif; }
+  .clock-date { opacity: .8; }
+  .direction { display: flex; flex-direction: column; justify-content: center; height: 100%; gap: .25em; font-family: system-ui, sans-serif; }
+  .direction-row { display: flex; align-items: center; gap: .4em; }
+  .direction-arrow { flex: 0 0 auto; }
+  .text-widget { display: flex; height: 100%; box-sizing: border-box; padding: .3em; font-family: system-ui, sans-serif; }
+  .text-widget > div { white-space: pre-wrap; overflow-wrap: anywhere; }
   #idle {
-    color: #444; font: 500 24px system-ui, sans-serif;
+    position: absolute; inset: 0; color: #444; font: 500 24px system-ui, sans-serif;
     display: flex; align-items: center; justify-content: center; height: 100%;
   }
   #notification {
@@ -33,11 +59,515 @@
 <div id="notification" role="status" aria-live="polite"></div>
 <script>
 (() => {
+  // ---- Environment: the Go agent serves this page and caches media locally. ----
+  const PROXY_BASE = '/proxy';       // guarded local proxy for `web` proxy mode
+  const SRC = (u) => u || '';        // local media already resolved to /media/<id>
   const stage = document.getElementById('stage');
   const notification = document.getElementById('notification');
-  let items = [], idx = 0, loop = true, revision = null, timer = null, renderSerial = 0;
-  let notificationId = 0, notificationTimer = null;
 
+  const WIDGET_TIMEOUT = 6000;       // per-widget ready cap (image/video/bg)
+  const WEB_TIMEOUT = 9000;          // iframe load cap (embedding may be refused)
+  const REVEAL_TIMEOUT = 10000;      // hard cap before revealing a scene anyway
+
+  const ARROWS = { up:'↑', down:'↓', left:'←', right:'→',
+    'up-left':'↖', 'up-right':'↗', 'down-left':'↙', 'down-right':'↘' };
+
+  // ---- Playback event reporting (relayed to the API over the WS channel). ----
+  function report(ev) {
+    try { navigator.sendBeacon('/event', JSON.stringify(ev)); } catch (_) {}
+  }
+  window.addEventListener('error', (e) => {
+    report({ type: 'playback', ok: false, browser_error: String((e && e.message) || 'error') });
+  });
+
+  // ================= shared rendering engine =================
+
+  let switchSerial = 0;  // guards in-flight scene reveals against newer switches
+  let sceneTimer = null; // scene-playlist dwell timer
+  let genId = 0;         // invalidates a scene-playlist rotation loop on teardown
+  let mode = null;       // 'playlist' | 'scene' | 'scene_playlist' | 'none'
+  let revKey = null;     // last applied revision key (kind:revision) for dedupe
+
+  // Legacy playlist rotation state.
+  let plItems = [], plIdx = 0, plLoop = true, plTimer = null, plSerial = 0;
+
+  function disposeAndRemove(el) {
+    if (!el) return;
+    if (el._dispose) { try { el._dispose(); } catch (_) {} }
+    if (el.remove) el.remove();
+  }
+  function keepOnly(node) {
+    for (const ch of Array.from(stage.children)) if (ch !== node) disposeAndRemove(ch);
+  }
+  function showWidgetError(box, msg) {
+    if (!box) return;
+    const d = document.createElement('div');
+    d.className = 'widget-error';
+    d.textContent = msg;
+    box.appendChild(d);
+  }
+
+  // A ready promise that resolves on load OR error OR timeout, so one broken
+  // media widget can never block the whole scene from switching in.
+  function mediaReady(el, wg, ctx, code, label) {
+    return new Promise((resolve) => {
+      let done = false;
+      const finish = () => { if (!done) { done = true; resolve(); } };
+      el.addEventListener('load', finish, { once: true });
+      el.addEventListener('error', () => { ctx.errors[wg.id] = code; showWidgetError(el.parentNode, label); finish(); }, { once: true });
+      setTimeout(finish, WIDGET_TIMEOUT);
+    });
+  }
+
+  function buildImage(wg, ctx) {
+    const cfg = wg.config || {};
+    const el = document.createElement('img');
+    el.style.objectFit = cfg.fit || 'contain';
+    el.src = SRC(cfg.source || cfg.url || '');
+    return { el, ready: mediaReady(el, wg, ctx, 'image load failed', '圖片載入失敗') };
+  }
+
+  function buildVideo(wg, ctx) {
+    const cfg = wg.config || {};
+    const el = document.createElement('video');
+    el.style.objectFit = cfg.fit || 'contain';
+    el.autoplay = true;
+    el.muted = cfg.muted !== false;   // muted autoplay is always allowed
+    el.playsInline = true;
+    el.loop = cfg.loop !== false;
+    el.controls = false;
+    el.src = SRC(cfg.source || cfg.url || '');
+    const ready = new Promise((resolve) => {
+      let done = false;
+      const finish = () => { if (!done) { done = true; resolve(); } };
+      el.addEventListener('canplay', () => { el.play().catch(() => {}); finish(); }, { once: true });
+      el.addEventListener('error', () => { ctx.errors[wg.id] = 'video load failed'; showWidgetError(el.parentNode, '影片載入失敗'); finish(); }, { once: true });
+      setTimeout(finish, WIDGET_TIMEOUT);
+    });
+    return { el, ready };
+  }
+
+  function buildWeb(wg, ctx) {
+    const cfg = wg.config || {};
+    const wmode = cfg.mode || 'embed';
+    const raw = cfg.url || cfg.source || '';
+    const el = document.createElement('iframe');
+    el.setAttribute('scrolling', 'no');
+    el.setAttribute('referrerpolicy', 'no-referrer');
+    el.setAttribute('sandbox', 'allow-scripts allow-same-origin allow-popups allow-forms');
+    let src = raw;
+    if (wmode === 'proxy' && PROXY_BASE) src = PROXY_BASE + '?url=' + encodeURIComponent(raw);
+    else src = SRC(raw);
+    el.src = src;
+    const ready = new Promise((resolve) => {
+      let loaded = false, done = false;
+      const finish = () => { if (!done) { done = true; resolve(); } };
+      el.addEventListener('load', () => { loaded = true; finish(); }, { once: true });
+      el.addEventListener('error', () => { ctx.errors[wg.id] = 'web load failed'; showWidgetError(el.parentNode, '網頁載入失敗'); finish(); }, { once: true });
+      // X-Frame-Options / CSP refusals often never fire load; flag but do not block.
+      setTimeout(() => {
+        if (!loaded) { ctx.errors[wg.id] = 'web load timeout (embedding may be blocked)'; showWidgetError(el.parentNode, '網頁無法嵌入'); }
+        finish();
+      }, WEB_TIMEOUT);
+    });
+    if (cfg.refresh_sec > 0) {
+      const iv = setInterval(() => { try { el.src = src; } catch (_) {} }, cfg.refresh_sec * 1000);
+      ctx.timers.push(() => clearInterval(iv));
+    }
+    return { el, ready };
+  }
+
+  function buildText(wg) {
+    const cfg = wg.config || {};
+    const box = document.createElement('div');
+    box.className = 'text-widget';
+    box.style.color = cfg.color || '#fff';
+    if (cfg.background) box.style.background = cfg.background;
+    box.style.fontSize = (cfg.font_size || Math.round(wg.height * 0.35)) + 'px';
+    box.style.fontWeight = String(cfg.weight || 400);
+    const align = cfg.align || 'left';
+    box.style.textAlign = align;
+    box.style.alignItems = 'center';
+    box.style.justifyContent = align === 'center' ? 'center' : align === 'right' ? 'flex-end' : 'flex-start';
+    const span = document.createElement('div');
+    span.textContent = cfg.text || '';
+    box.appendChild(span);
+    return { el: box, ready: Promise.resolve() };
+  }
+
+  function buildTicker(wg, ctx) {
+    const cfg = wg.config || {};
+    const dir = cfg.direction || 'left';
+    const vertical = dir === 'up' || dir === 'down';
+    const wrap = document.createElement('div');
+    wrap.className = 'ticker-wrap';
+    if (cfg.background) wrap.style.background = cfg.background;
+    if (vertical) wrap.style.flexDirection = 'column';
+    const content = document.createElement('div');
+    content.className = 'ticker-content';
+    if (cfg.color) content.style.color = cfg.color;
+    if (vertical) content.style.whiteSpace = 'normal';
+    content.style.fontSize = (cfg.font_size || Math.round(wg.height * 0.55)) + 'px';
+    content.textContent = cfg.text || '';
+    wrap.appendChild(content);
+
+    const speed = Math.max(10, cfg.speed || 80); // px/sec in canvas coords
+    let pos = 0, last = 0, raf = 0;
+    function reset() {
+      if (dir === 'left') pos = wg.width;
+      else if (dir === 'right') pos = -content.scrollWidth;
+      else if (dir === 'up') pos = wg.height;
+      else pos = -content.scrollHeight;
+      last = performance.now();
+    }
+    function step(now) {
+      const dt = Math.min(0.1, (now - last) / 1000); last = now;
+      if (dir === 'left') { pos -= speed * dt; if (pos < -content.scrollWidth) pos = wg.width; content.style.transform = `translateX(${pos}px)`; }
+      else if (dir === 'right') { pos += speed * dt; if (pos > wg.width) pos = -content.scrollWidth; content.style.transform = `translateX(${pos}px)`; }
+      else if (dir === 'up') { pos -= speed * dt; if (pos < -content.scrollHeight) pos = wg.height; content.style.transform = `translateY(${pos}px)`; }
+      else { pos += speed * dt; if (pos > wg.height) pos = -content.scrollHeight; content.style.transform = `translateY(${pos}px)`; }
+      raf = requestAnimationFrame(step);
+    }
+    requestAnimationFrame(() => { reset(); raf = requestAnimationFrame(step); });
+    ctx.timers.push(() => cancelAnimationFrame(raf));
+
+    if (cfg.source_url) {
+      const loadFeed = async () => {
+        try {
+          const r = await fetch(cfg.source_url, { cache: 'no-store' });
+          const ct = r.headers.get('content-type') || '';
+          const txt = ct.includes('json') ? tickerFromJSON(await r.json()) : await r.text();
+          if (txt) { content.textContent = txt; reset(); }
+        } catch (_) { /* offline: keep last feed text */ }
+      };
+      loadFeed();
+      const iv = setInterval(loadFeed, 60000);
+      ctx.timers.push(() => clearInterval(iv));
+    }
+    return { el: wrap, ready: Promise.resolve() };
+  }
+  function tickerFromJSON(j) {
+    if (typeof j === 'string') return j;
+    if (Array.isArray(j)) return j.map((x) => (typeof x === 'string' ? x : (x && x.text) || '')).filter(Boolean).join('   •   ');
+    if (j && typeof j === 'object') {
+      if (typeof j.text === 'string') return j.text;
+      if (Array.isArray(j.items)) return tickerFromJSON(j.items);
+    }
+    return '';
+  }
+
+  function buildDirection(wg) {
+    const cfg = wg.config || {};
+    const entries = Array.isArray(cfg.entries) ? cfg.entries : [];
+    const box = document.createElement('div');
+    box.className = 'direction';
+    if (cfg.background) box.style.background = cfg.background;
+    box.style.color = cfg.color || '#fff';
+    box.style.fontSize = (cfg.font_size || Math.round(wg.height / Math.max(2, entries.length + 1))) + 'px';
+    for (const e of entries) {
+      const row = document.createElement('div');
+      row.className = 'direction-row';
+      const ar = document.createElement('span');
+      ar.className = 'direction-arrow';
+      ar.textContent = ARROWS[e.arrow] || '→';
+      const lb = document.createElement('span');
+      lb.className = 'direction-label';
+      lb.textContent = e.label || '';
+      row.appendChild(ar); row.appendChild(lb);
+      box.appendChild(row);
+    }
+    return { el: box, ready: Promise.resolve() };
+  }
+
+  function buildClock(wg, ctx) {
+    const cfg = wg.config || {};
+    const box = document.createElement('div');
+    box.className = 'clock';
+    if (cfg.background) box.style.background = cfg.background;
+    box.style.color = cfg.color || '#fff';
+    const base = cfg.font_size || Math.round(wg.height * 0.42);
+    const timeEl = document.createElement('div');
+    timeEl.className = 'clock-time';
+    timeEl.style.fontSize = base + 'px';
+    box.appendChild(timeEl);
+    let dateEl = null;
+    if (cfg.show_date) {
+      dateEl = document.createElement('div');
+      dateEl.className = 'clock-date';
+      dateEl.style.fontSize = Math.round(base * 0.4) + 'px';
+      box.appendChild(dateEl);
+    }
+    const use12 = cfg.format === '12h';
+    function tick() {
+      const now = new Date();
+      const topt = { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: use12 };
+      const dopt = { year: 'numeric', month: '2-digit', day: '2-digit', weekday: 'short' };
+      if (cfg.timezone) { topt.timeZone = cfg.timezone; dopt.timeZone = cfg.timezone; }
+      try { timeEl.textContent = new Intl.DateTimeFormat(undefined, topt).format(now); }
+      catch (_) { timeEl.textContent = now.toLocaleTimeString(); }
+      if (dateEl) {
+        try { dateEl.textContent = new Intl.DateTimeFormat(undefined, dopt).format(now); }
+        catch (_) { dateEl.textContent = now.toLocaleDateString(); }
+      }
+    }
+    tick();
+    const iv = setInterval(tick, 1000);   // rendered from the device clock, no network
+    ctx.timers.push(() => clearInterval(iv));
+    return { el: box, ready: Promise.resolve() };
+  }
+
+  function buildWidget(wg, ctx) {
+    switch (wg.kind) {
+      case 'image': return buildImage(wg, ctx);
+      case 'video': return buildVideo(wg, ctx);
+      case 'web': return buildWeb(wg, ctx);
+      case 'text': return buildText(wg, ctx);
+      case 'ticker': return buildTicker(wg, ctx);
+      case 'direction': return buildDirection(wg, ctx);
+      case 'clock': return buildClock(wg, ctx);
+      default: {
+        ctx.errors[wg.id] = 'unknown widget kind: ' + wg.kind;
+        const d = document.createElement('div');
+        d.className = 'widget-error';
+        d.textContent = '未知元件：' + wg.kind;
+        return { el: d, ready: Promise.resolve() };
+      }
+    }
+  }
+
+  function sceneSize(scene) {
+    return { w: scene.width > 0 ? scene.width : 1920, h: scene.height > 0 ? scene.height : 1080 };
+  }
+  function layoutCanvas(canvas, scene) {
+    const { w, h } = sceneSize(scene);
+    const vw = window.innerWidth, vh = window.innerHeight;
+    const s = Math.min(vw / w, vh / h);
+    canvas.style.transform = `translate(${(vw - w * s) / 2}px, ${(vh - h * s) / 2}px) scale(${s})`;
+  }
+
+  // Build a full scene into a hidden layer. Returns the layer plus the list of
+  // readiness promises for its required (media) widgets and an error map.
+  function buildSceneLayer(scene) {
+    const { w, h } = sceneSize(scene);
+    const layer = document.createElement('div');
+    layer.className = 'scene-layer';
+    const canvas = document.createElement('div');
+    canvas.className = 'scene-canvas';
+    canvas.style.width = w + 'px';
+    canvas.style.height = h + 'px';
+    canvas._scene = scene;
+    const bg = scene.background || {};
+    if (bg.color) canvas.style.background = bg.color;
+
+    const ctx = { errors: {}, timers: [] };
+    const readies = [];
+
+    if (bg.source) {
+      const bgImg = document.createElement('img');
+      bgImg.className = 'scene-bg';
+      bgImg.src = SRC(bg.source);
+      readies.push(new Promise((res) => {
+        let d = false; const f = () => { if (!d) { d = true; res(); } };
+        bgImg.addEventListener('load', f, { once: true });
+        bgImg.addEventListener('error', f, { once: true });
+        setTimeout(f, WIDGET_TIMEOUT);
+      }));
+      canvas.appendChild(bgImg);
+    }
+
+    const widgets = (scene.widgets || []).slice().sort((a, b) => (a.z || 0) - (b.z || 0));
+    for (const wg of widgets) {
+      const box = document.createElement('div');
+      box.className = 'widget';
+      box.style.left = (wg.x || 0) + 'px';
+      box.style.top = (wg.y || 0) + 'px';
+      box.style.width = (wg.width || 0) + 'px';
+      box.style.height = (wg.height || 0) + 'px';
+      box.style.zIndex = String((wg.z || 0) + 1);
+      const built = buildWidget(wg, ctx);
+      box.appendChild(built.el);
+      canvas.appendChild(box);
+      if (built.ready) readies.push(built.ready);
+    }
+
+    layer.appendChild(canvas);
+    layer._dispose = () => { for (const fn of ctx.timers) { try { fn(); } catch (_) {} } };
+    return { el: layer, canvas, readies, errors: ctx.errors };
+  }
+
+  function allReady(readies) {
+    return Promise.race([
+      Promise.all(readies.map((p) => p.catch(() => {}))),
+      new Promise((res) => setTimeout(res, REVEAL_TIMEOUT)),
+    ]);
+  }
+
+  // Atomic switch: preload the new scene in a hidden layer above the current one,
+  // wait until every required widget is ready (or the cap elapses), then flip it
+  // visible and dispose the old layer in one step — no black flash, no fade.
+  async function showScene(scene) {
+    const serial = ++switchSerial;
+    const layer = buildSceneLayer(scene);
+    layer.el.style.visibility = 'hidden';
+    stage.appendChild(layer.el);
+    layoutCanvas(layer.canvas, scene);
+    await allReady(layer.readies);
+    if (serial !== switchSerial) { disposeAndRemove(layer.el); return; } // superseded
+    layer.el.style.visibility = 'visible';
+    keepOnly(layer.el);
+    reportScene(scene, layer.errors);
+  }
+
+  function reportScene(scene, errors) {
+    const ids = Object.keys(errors || {});
+    report({
+      type: 'playback',
+      ok: ids.length === 0,
+      item_id: null,
+      scene_id: scene.scene_id != null ? scene.scene_id : null,
+      scene_version: scene.version != null ? scene.version : null,
+      widget_errors: ids.length ? errors : undefined,
+    });
+  }
+
+  function startScene(sc) { showScene(sc); }
+
+  function startScenePlaylist(spl) {
+    const scenes = spl.scenes || [];
+    const loop = spl.loop !== false;
+    const gen = genId;
+    let i = 0;
+    async function rotate() {
+      if (gen !== genId) return;
+      if (!scenes.length) { showIdle(); return; }
+      const entry = scenes[i] || {};
+      if (entry.scene) await showScene(entry.scene);
+      if (gen !== genId) return;
+      const dwell = Math.max(1000, (entry.dwell_sec || 10) * 1000);
+      clearTimeout(sceneTimer);
+      sceneTimer = setTimeout(() => {
+        i++;
+        if (i >= scenes.length) { if (!loop) return; i = 0; }
+        rotate();
+      }, dwell);
+    }
+    rotate();
+  }
+
+  function showIdle() {
+    const idle = document.createElement('div');
+    idle.id = 'idle';
+    idle.textContent = 'ScreenBoard';
+    stage.appendChild(idle);
+    keepOnly(idle);
+  }
+
+  // ---- Legacy single-item playlist path (behaviour preserved verbatim). ----
+  function startPlaylist(pl) {
+    plItems = pl.items || [];
+    plIdx = 0;
+    plLoop = pl.loop !== false;
+    if (plItems.length) plShow(); else showIdle();
+  }
+  function plAdvance() {
+    if (mode !== 'playlist') return;
+    plIdx++;
+    if (plIdx >= plItems.length) { if (!plLoop) return; plIdx = 0; }
+    plShow();
+  }
+  function plShow() {
+    if (mode !== 'playlist') return;
+    if (plTimer) { clearTimeout(plTimer); plTimer = null; }
+    const item = plItems[plIdx];
+    if (!item) return;
+    const dur = (item.duration_sec || 10) * 1000;
+    const serial = ++plSerial;
+    let el, revealed = false;
+    const reveal = () => {
+      if (revealed || serial !== plSerial) return;
+      revealed = true;
+      el.style.visibility = 'visible';
+      keepOnly(el);
+    };
+    if (item.type === 'image') {
+      el = document.createElement('img'); el.className = 'pl-item'; el.src = SRC(item.source);
+      el.onload = reveal;
+      el.onerror = () => { report({ type: 'playback', ok: false, item_id: item.id, browser_error: 'image load failed' }); reveal(); };
+      plTimer = setTimeout(plAdvance, dur);
+    } else if (item.type === 'video') {
+      el = document.createElement('video'); el.className = 'pl-item'; el.src = SRC(item.source);
+      el.autoplay = true; el.muted = true; el.playsInline = true; el.controls = false;
+      el.oncanplay = reveal; el.onended = plAdvance;
+      el.onerror = () => { report({ type: 'playback', ok: false, item_id: item.id, browser_error: 'video load failed' }); reveal(); plAdvance(); };
+      plTimer = setTimeout(plAdvance, dur + 2000);
+    } else {
+      el = document.createElement('iframe'); el.className = 'pl-item'; el.src = SRC(item.source);
+      el.setAttribute('scrolling', 'no');
+      el.onload = reveal;
+      el.onerror = () => { report({ type: 'playback', ok: false, item_id: item.id, browser_error: 'frame load failed' }); reveal(); };
+      plTimer = setTimeout(plAdvance, dur);
+    }
+    el.style.visibility = 'hidden';
+    stage.appendChild(el);
+    report({ type: 'playback', ok: true, item_id: item.id });
+  }
+
+  // ---- Target dispatch (dual-shape: playlist OR scene / scene_playlist). ----
+  function normalize(data) {
+    if (!data || typeof data !== 'object') return { kind: 'none' };
+    if (typeof data.kind === 'string') return data;               // ResolvedTarget
+    if (Array.isArray(data.items) && 'playlist_id' in data) return { kind: data.playlist_id ? 'playlist' : 'none', playlist: data };
+    if (Array.isArray(data.widgets) && 'scene_id' in data) return { kind: 'scene', scene: data };
+    if (Array.isArray(data.scenes) && 'scene_playlist_id' in data) return { kind: 'scene_playlist', scene_playlist: data };
+    return { kind: 'none' };
+  }
+  function revKeyOf(t) {
+    if (t.kind === 'playlist') return 'pl:' + ((t.playlist && t.playlist.revision) || '');
+    if (t.kind === 'scene') return 'sc:' + ((t.scene && t.scene.revision) || '');
+    if (t.kind === 'scene_playlist') return 'spl:' + ((t.scene_playlist && t.scene_playlist.revision) || '');
+    return 'none';
+  }
+  function teardown() {
+    genId++;          // stop any scene-playlist rotation loop
+    switchSerial++;   // abort any in-flight scene reveal
+    plSerial++;       // abort any in-flight playlist reveal
+    if (plTimer) { clearTimeout(plTimer); plTimer = null; }
+    if (sceneTimer) { clearTimeout(sceneTimer); sceneTimer = null; }
+    // Intentionally does NOT clear the screen: the incoming mode reveals over the
+    // current content, so switching never blanks the display.
+  }
+  function applyTarget(data) {
+    const t = normalize(data);
+    const key = revKeyOf(t);
+    if (key === revKey) return;   // unchanged revision — keep playing
+    revKey = key;
+    teardown();
+    mode = t.kind;
+    if (t.kind === 'playlist') startPlaylist(t.playlist || { items: [] });
+    else if (t.kind === 'scene') startScene(t.scene);
+    else if (t.kind === 'scene_playlist') startScenePlaylist(t.scene_playlist || { scenes: [] });
+    else showIdle();
+  }
+
+  window.addEventListener('resize', () => {
+    document.querySelectorAll('.scene-canvas').forEach((c) => { if (c._scene) layoutCanvas(c, c._scene); });
+  });
+
+  async function poll() {
+    // Primary: the resolved target. Fall back to the legacy playlist endpoint for
+    // an older API. On total failure keep displaying the last scene (offline).
+    try {
+      const r = await fetch('/target.json', { cache: 'no-store' });
+      if (r.ok) { applyTarget(await r.json()); return; }
+    } catch (_) {}
+    try {
+      const r = await fetch('/playlist.json', { cache: 'no-store' });
+      if (r.ok) applyTarget(await r.json());
+    } catch (_) { /* keep showing current content */ }
+  }
+
+  // ---- Operational notification overlay (unchanged). ----
+  let notificationId = 0, notificationTimer = null;
   function showNotification(notice) {
     if (!notice || !notice.id || notice.id === notificationId || !notice.message) return;
     notificationId = notice.id;
@@ -48,7 +578,6 @@
       notificationTimer = setTimeout(() => { notification.className = ''; }, 5000);
     }
   }
-
   async function pollNotification() {
     try {
       const r = await fetch('/notification.json', { cache: 'no-store' });
@@ -56,96 +585,9 @@
     } catch (_) { /* local player may briefly restart */ }
   }
 
-  function report(ev) {
-    try { navigator.sendBeacon('/event', JSON.stringify(ev)); } catch (_) {}
-  }
-  window.addEventListener('error', (e) => {
-    report({ type: 'playback', ok: false, browser_error: String(e.message || 'error') });
-  });
-
-  function clearStage() {
-    if (timer) { clearTimeout(timer); timer = null; }
-    renderSerial++;
-    stage.replaceChildren();
-  }
-
-  function advance() {
-    idx++;
-    if (idx >= items.length) {
-      if (!loop) { clearStage(); return; }
-      idx = 0;
-    }
-    show();
-  }
-
-  function show() {
-    if (timer) { clearTimeout(timer); timer = null; }
-    const item = items[idx];
-    if (!item) return;
-    const dur = (item.duration_sec || 10) * 1000;
-    let el;
-    const previous = stage.firstElementChild;
-    const serial = ++renderSerial;
-    let revealed = false;
-    function reveal() {
-      if (revealed || serial !== renderSerial) return;
-      revealed = true;
-      el.style.visibility = 'visible';
-      if (previous && previous !== el) {
-        previous.remove();
-      }
-    }
-
-    if (item.type === 'image') {
-      el = document.createElement('img');
-      el.src = item.source;
-      el.onload = reveal;
-      el.onerror = () => { report({ type: 'playback', ok: false, item_id: item.id, browser_error: 'image load failed' }); reveal(); };
-      timer = setTimeout(advance, dur);
-    } else if (item.type === 'video') {
-      el = document.createElement('video');
-      el.src = item.source;
-      el.autoplay = true; el.muted = true; el.playsInline = true; el.controls = false;
-      el.oncanplay = reveal;
-      el.onended = advance;
-      el.onerror = () => { report({ type: 'playback', ok: false, item_id: item.id, browser_error: 'video load failed' }); reveal(); advance(); };
-      // Fallback in case 'ended' never fires.
-      timer = setTimeout(advance, dur + 2000);
-    } else {
-      // url / html / pdf → iframe
-      el = document.createElement('iframe');
-      el.src = item.source;
-      el.setAttribute('scrolling', 'no');
-      el.onload = reveal;
-      el.onerror = () => { report({ type: 'playback', ok: false, item_id: item.id, browser_error: 'frame load failed' }); reveal(); };
-      timer = setTimeout(advance, dur);
-    }
-    // Keep the current item visible until the new one is actually ready.
-    el.style.visibility = 'hidden';
-    stage.appendChild(el);
-    report({ type: 'playback', ok: true, item_id: item.id });
-  }
-
-  async function poll() {
-    try {
-      const r = await fetch('/playlist.json', { cache: 'no-store' });
-      const pl = await r.json();
-      if (pl.revision !== revision) {
-        revision = pl.revision;
-        items = pl.items || [];
-        loop = pl.loop !== false;
-        idx = 0;
-        if (items.length) show();
-        else { clearStage(); stage.innerHTML = '<div id="idle">ScreenBoard</div>'; }
-      }
-    } catch (_) { /* keep showing current content on transient errors */ }
-  }
-
   poll();
   setInterval(poll, 5000);
   pollNotification();
-  // Operational commands such as reboot can end the Agent quickly. Poll fast
-  // enough that the user sees the on-screen warning before that happens.
   setInterval(pollNotification, 250);
 })();
 </script>

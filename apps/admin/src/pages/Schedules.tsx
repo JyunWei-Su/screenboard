@@ -3,12 +3,21 @@ import { api } from "../api";
 import { useFetch } from "../hooks";
 import { canWrite, useAuth } from "../auth";
 import { EmptyRow, PageHeader, TableCard } from "../components/ui";
-import { label, targetTypeLabels } from "../labels";
+import { assignSourceLabels, label, targetTypeLabels } from "../labels";
+
+type SourceType = "playlist" | "scene" | "scene_playlist";
 
 interface Schedule {
   id: number;
-  playlist_id: number;
-  playlist_name: string;
+  // legacy playlist fields (kept for the migration period)
+  playlist_id: number | null;
+  playlist_name: string | null;
+  // new scene assignment fields (optional; API being extended in parallel)
+  source_type?: SourceType;
+  scene_id?: number | null;
+  scene_name?: string | null;
+  scene_playlist_id?: number | null;
+  scene_playlist_name?: string | null;
   target_type: string;
   target_id: string;
   time_start: string | null;
@@ -20,16 +29,20 @@ interface NamedRow { id: number; name: string }
 interface DeviceRow { uuid: string; name: string }
 
 const DAYS = ["日", "一", "二", "三", "四", "五", "六"];
+const SOURCE_TYPES: SourceType[] = ["playlist", "scene", "scene_playlist"];
 
 export default function Schedules() {
   const { user } = useAuth();
   const writable = canWrite(user);
   const { data, reload } = useFetch<Schedule[]>("/api/schedules");
   const { data: playlists } = useFetch<NamedRow[]>("/api/playlists");
+  const { data: scenes } = useFetch<NamedRow[]>("/api/scenes");
+  const { data: scenePlaylists } = useFetch<NamedRow[]>("/api/scene-playlists");
   const { data: groups } = useFetch<NamedRow[]>("/api/groups");
   const { data: devices } = useFetch<DeviceRow[]>("/api/devices");
 
-  const [playlistId, setPlaylistId] = useState("");
+  const [sourceType, setSourceType] = useState<SourceType>("playlist");
+  const [sourceId, setSourceId] = useState("");
   const [targetType, setTargetType] = useState<"group" | "device">("group");
   const [targetId, setTargetId] = useState("");
   const [timeStart, setTimeStart] = useState("");
@@ -39,17 +52,25 @@ export default function Schedules() {
 
   const weekdays = days.reduce((m, on, i) => (on ? m | (1 << i) : m), 0);
 
+  const sourceOptions =
+    sourceType === "playlist" ? playlists : sourceType === "scene" ? scenes : scenePlaylists;
+
   async function create() {
-    if (!playlistId || !targetId) return;
-    await api.post("/api/schedules", {
-      playlist_id: Number(playlistId),
+    if (!sourceId || !targetId) return;
+    const body: Record<string, unknown> = {
+      source_type: sourceType,
       target_type: targetType,
       target_id: targetId,
       time_start: timeStart || null,
       time_end: timeEnd || null,
       weekdays,
       priority,
-    });
+    };
+    if (sourceType === "playlist") body.playlist_id = Number(sourceId);
+    else if (sourceType === "scene") body.scene_id = Number(sourceId);
+    else body.scene_playlist_id = Number(sourceId);
+    await api.post("/api/schedules", body);
+    setSourceId("");
     reload();
   }
   async function remove(id: number) {
@@ -61,18 +82,46 @@ export default function Schedules() {
     return DAYS.filter((_, i) => mask & (1 << i)).join("、");
   }
 
+  function sourceCell(s: Schedule) {
+    const t: SourceType = s.source_type ?? "playlist";
+    const name =
+      t === "scene"
+        ? s.scene_name
+        : t === "scene_playlist"
+          ? s.scene_playlist_name
+          : s.playlist_name;
+    return `${label(assignSourceLabels, t)}:${name ?? "—"}`;
+  }
+
   return (
     <div className="space-y-5">
-      <PageHeader title="排程" subtitle="依時間與星期指派播放清單" />
+      <PageHeader title="排程" subtitle="依時間與星期指派播放清單、場景或場景輪播" />
 
       {writable && (
         <div className="card space-y-4">
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
             <div>
-              <label className="label">播放清單</label>
-              <select className="select" value={playlistId} onChange={(e) => setPlaylistId(e.target.value)}>
+              <label className="label">來源類型</label>
+              <select
+                className="select"
+                value={sourceType}
+                onChange={(e) => {
+                  setSourceType(e.target.value as SourceType);
+                  setSourceId("");
+                }}
+              >
+                {SOURCE_TYPES.map((t) => (
+                  <option key={t} value={t}>
+                    {label(assignSourceLabels, t)}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="label">{label(assignSourceLabels, sourceType)}</label>
+              <select className="select" value={sourceId} onChange={(e) => setSourceId(e.target.value)}>
                 <option value="">— 選擇 —</option>
-                {(playlists ?? []).map((p) => (
+                {(sourceOptions ?? []).map((p) => (
                   <option key={p.id} value={p.id}>
                     {p.name}
                   </option>
@@ -119,13 +168,15 @@ export default function Schedules() {
                 onChange={(e) => setPriority(Number(e.target.value))}
               />
             </div>
-            <div>
-              <label className="label">開始時間</label>
-              <input className="input" type="time" value={timeStart} onChange={(e) => setTimeStart(e.target.value)} />
-            </div>
-            <div>
-              <label className="label">結束時間</label>
-              <input className="input" type="time" value={timeEnd} onChange={(e) => setTimeEnd(e.target.value)} />
+            <div className="grid grid-cols-2 gap-2">
+              <div>
+                <label className="label">開始</label>
+                <input className="input" type="time" value={timeStart} onChange={(e) => setTimeStart(e.target.value)} />
+              </div>
+              <div>
+                <label className="label">結束</label>
+                <input className="input" type="time" value={timeEnd} onChange={(e) => setTimeEnd(e.target.value)} />
+              </div>
             </div>
           </div>
           <div className="flex flex-col gap-3 border-t border-slate-100 pt-3 sm:flex-row sm:flex-wrap sm:items-center dark:border-dark-border">
@@ -157,7 +208,7 @@ export default function Schedules() {
         <table className="w-full min-w-[680px]">
           <thead>
             <tr>
-              <th className="th">播放清單</th>
+              <th className="th">來源</th>
               <th className="th">目標</th>
               <th className="th">時間</th>
               <th className="th">星期</th>
@@ -168,7 +219,7 @@ export default function Schedules() {
           <tbody>
             {(data ?? []).map((s) => (
               <tr key={s.id}>
-                <td className="td font-medium">{s.playlist_name}</td>
+                <td className="td font-medium">{sourceCell(s)}</td>
                 <td className="td whitespace-nowrap">
                   {label(targetTypeLabels, s.target_type)}:{s.target_id.length > 10 ? s.target_id.slice(0, 8) : s.target_id}
                 </td>

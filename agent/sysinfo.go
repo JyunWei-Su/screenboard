@@ -73,7 +73,7 @@ func primaryMAC() string {
 }
 
 var (
-	activeModeResRe = regexp.MustCompile(`(\d+x\d+)\s*\*`)
+	activeModeResRe    = regexp.MustCompile(`(\d+x\d+)\s*\*`)
 	currentScreenResRe = regexp.MustCompile(`current\s+(\d+)\s+x\s+(\d+)`)
 )
 

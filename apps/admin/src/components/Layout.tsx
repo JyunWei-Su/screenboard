@@ -15,6 +15,8 @@ import {
   IconMonitor,
   IconMonitorPlay,
   IconMoon,
+  IconScene,
+  IconSceneStack,
   IconSun,
   IconUsers,
 } from "./icons";
@@ -31,6 +33,8 @@ const nav: NavItem[] = [
   { to: "/devices", label: "裝置", Icon: IconMonitor },
   { to: "/groups", label: "群組", Icon: IconLayers },
   { to: "/playlists", label: "播放清單", Icon: IconList },
+  { to: "/scenes", label: "場景", Icon: IconScene },
+  { to: "/scene-playlists", label: "場景輪播", Icon: IconSceneStack },
   { to: "/media", label: "媒體", Icon: IconImage },
   { to: "/schedules", label: "排程", Icon: IconCalendar },
   { to: "/ota", label: "OTA", Icon: IconDownload },

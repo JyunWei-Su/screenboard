@@ -170,3 +170,23 @@ export const IconMoon = (p: P) => (
     <path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9z" />
   </Svg>
 );
+
+// A framed canvas with positioned blocks — represents a Scene.
+export const IconScene = (p: P) => (
+  <Svg {...p}>
+    <rect x="3" y="4" width="18" height="16" rx="2" />
+    <rect x="6" y="7" width="6" height="5" rx="1" />
+    <path d="M15 7h3" />
+    <path d="M15 11h3" />
+    <path d="M6 16h12" />
+  </Svg>
+);
+
+// Stacked scene frames — represents a Scene playlist (rotation).
+export const IconSceneStack = (p: P) => (
+  <Svg {...p}>
+    <rect x="7" y="3" width="14" height="11" rx="2" />
+    <path d="M3 8v11a2 2 0 0 0 2 2h11" />
+    <path d="m11 6 4 2.5L11 11z" fill="currentColor" stroke="none" />
+  </Svg>
+);

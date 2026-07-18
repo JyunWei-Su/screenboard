@@ -80,7 +80,10 @@ app.patch("/:uuid", requireRole("admin", "operator"), async (c) => {
   const body = await c.req.json<{
     name?: string;
     group_id?: number | null;
+    source_type?: "playlist" | "scene" | "scene_playlist";
     playlist_id?: number | null;
+    scene_id?: number | null;
+    scene_playlist_id?: number | null;
     status?: string;
     display?: Record<string, unknown>;
     agent_settings?: unknown;
@@ -95,9 +98,36 @@ app.patch("/:uuid", requireRole("admin", "operator"), async (c) => {
     sets.push("group_id = ?");
     binds.push(body.group_id);
   }
-  if (body.playlist_id !== undefined) {
+  if (body.source_type !== undefined) {
+    // Switching the source type sets source_type + the matching id and clears
+    // the other two, so a device always has exactly one active source column.
+    const st = body.source_type;
+    if (st !== "playlist" && st !== "scene" && st !== "scene_playlist") {
+      return c.json({ error: "invalid_source_type" }, 400);
+    }
+    sets.push("source_type = ?");
+    binds.push(st);
     sets.push("playlist_id = ?");
-    binds.push(body.playlist_id);
+    binds.push(st === "playlist" ? (body.playlist_id ?? null) : null);
+    sets.push("scene_id = ?");
+    binds.push(st === "scene" ? (body.scene_id ?? null) : null);
+    sets.push("scene_playlist_id = ?");
+    binds.push(st === "scene_playlist" ? (body.scene_playlist_id ?? null) : null);
+  } else {
+    // Back-compat / partial updates without a source_type change. Assigning a
+    // playlist_id alone behaves exactly as before.
+    if (body.playlist_id !== undefined) {
+      sets.push("playlist_id = ?");
+      binds.push(body.playlist_id);
+    }
+    if (body.scene_id !== undefined) {
+      sets.push("scene_id = ?");
+      binds.push(body.scene_id);
+    }
+    if (body.scene_playlist_id !== undefined) {
+      sets.push("scene_playlist_id = ?");
+      binds.push(body.scene_playlist_id);
+    }
   }
   if (body.status !== undefined) {
     sets.push("status = ?");
@@ -158,6 +188,7 @@ app.post("/:uuid/commands", requireRole("admin", "operator"), async (c) => {
     "restart_player",
     "take_screenshot",
     "check_update",
+    "sync_time",
     "apply_display",
     "apply_agent_settings",
     "repair_tunnel",

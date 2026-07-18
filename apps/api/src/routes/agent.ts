@@ -2,7 +2,7 @@ import { Hono } from "hono";
 import type { Env, Variables } from "../types";
 import { deviceAuth } from "../auth";
 import { deviceStub } from "../lib/command";
-import { buildResolvedPlaylist, resolvePlaylistId } from "../lib/resolve";
+import { buildResolvedPlaylist, resolvePlaylistId, resolveTarget } from "../lib/resolve";
 import { recordEvent } from "../lib/notify";
 import { allowedSshUsers, createTunnelToken, remoteAccessConfigured } from "../lib/cloudflareTunnel";
 import type { HealthSample, OtaUpdateResponse } from "@screenboard/shared";
@@ -131,9 +131,10 @@ app.post("/screenshot", async (c) => {
   const key = `screenshots/${uuid}/${Date.now()}.png`;
   await c.env.BUCKET.put(key, bytes, { httpMetadata: { contentType: "image/png" } });
   const res = await c.env.DB.prepare(
-    "INSERT INTO screenshots (device_id, r2_key, trigger, analysis) VALUES (?, ?, ?, ?)",
+    `INSERT INTO screenshots (device_id, r2_key, trigger, analysis, scene_id, scene_version, widget_errors)
+     SELECT ?, ?, ?, ?, active_scene_id, active_scene_version, widget_errors FROM devices WHERE uuid = ?`,
   )
-    .bind(uuid, key, trigger, analysis)
+    .bind(uuid, key, trigger, analysis, uuid)
     .run();
   if (analysis === "black_screen") {
     await recordEvent(c.env, {
@@ -159,6 +160,28 @@ app.get("/playlist", async (c) => {
   if (!playlistId) return c.json({ playlist_id: null, items: [] });
   const resolved = await buildResolvedPlaylist(c.env, playlistId);
   return c.json(resolved ?? { playlist_id: null, items: [] });
+});
+
+// Resolve the single effective playback target (playlist | scene |
+// scene_playlist | none) for this device right now. Newer agents use this in
+// place of /playlist; /playlist is kept unchanged for back-compat.
+app.get("/target", async (c) => {
+  const uuid = c.get("deviceUuid");
+  const device = await c.env.DB.prepare(
+    "SELECT uuid, group_id, source_type, playlist_id, scene_id, scene_playlist_id FROM devices WHERE uuid = ?",
+  )
+    .bind(uuid)
+    .first<{
+      uuid: string;
+      group_id: number | null;
+      source_type: string;
+      playlist_id: number | null;
+      scene_id: number | null;
+      scene_playlist_id: number | null;
+    }>();
+  if (!device) return c.json({ error: "unknown_device" }, 404);
+  const target = await resolveTarget(c.env, device);
+  return c.json(target);
 });
 
 // Called once by the root-owned installer after enrollment. A fresh token is

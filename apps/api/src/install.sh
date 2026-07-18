@@ -50,7 +50,7 @@ export DEBIAN_FRONTEND=noninteractive
 apt-get update -y
 apt-get install -y --no-install-recommends \
   xserver-xorg xinit openbox chromium scrot x11-xserver-utils x11-utils xbindkeys \
-  ca-certificates curl unclutter dbus-x11 fonts-liberation fonts-noto-cjk openssh-server sudo
+  ca-certificates curl unclutter dbus-x11 fonts-liberation fonts-noto-cjk openssh-server sudo systemd-timesyncd
 CHROMIUM_BIN="$(command -v chromium || command -v chromium-browser || echo chromium)"
 
 # cloudflared is supplied by Cloudflare's signed package repository.
@@ -294,6 +294,23 @@ REPAIR
 chown root:root /usr/local/bin/screenboard-repair-tunnel
 chmod 755 /usr/local/bin/screenboard-repair-tunnel
 
+# Remote NTP helper. It deliberately accepts no arguments: the Agent can only
+# enable/restart the OS-managed time service, never choose an arbitrary command
+# or time source. The output becomes the command acknowledgement detail.
+cat >/usr/local/bin/screenboard-sync-time <<'TIME'
+#!/bin/sh
+set -eu
+[ "$#" -eq 0 ] || { echo "no arguments accepted" >&2; exit 2; }
+command -v timedatectl >/dev/null 2>&1 || { echo "timedatectl unavailable" >&2; exit 1; }
+timedatectl set-ntp true
+systemctl restart systemd-timesyncd.service
+SYNCED="$(timedatectl show --property=NTPSynchronized --value 2>/dev/null || echo unknown)"
+NOW="$(timedatectl show --property=TimeUSec --value 2>/dev/null || date -Is)"
+printf 'NTP enabled; synchronized=%s; time=%s\n' "$SYNCED" "$NOW"
+TIME
+chown root:root /usr/local/bin/screenboard-sync-time
+chmod 755 /usr/local/bin/screenboard-sync-time
+
 # Remote full-reinstall helper. Re-runs this installer as root (repairs binary,
 # helpers, sudoers, cloudflared, kiosk session) and reboots. The persisted
 # config means no enrollment token is needed.
@@ -314,7 +331,7 @@ chmod 755 /usr/local/bin/screenboard-reinstall
 # of an auth prompt.
 install -d -m 750 /etc/sudoers.d
 cat >/etc/sudoers.d/screenboard-agent <<SUDOERS
-$KIOSK_USER ALL=(root) NOPASSWD: /usr/bin/systemctl reboot, /usr/bin/systemctl poweroff, /usr/local/bin/screenboard-apply-update, /usr/local/bin/screenboard-repair-tunnel, /usr/local/bin/screenboard-reinstall
+$KIOSK_USER ALL=(root) NOPASSWD: /usr/bin/systemctl reboot, /usr/bin/systemctl poweroff, /usr/local/bin/screenboard-apply-update, /usr/local/bin/screenboard-repair-tunnel, /usr/local/bin/screenboard-reinstall, /usr/local/bin/screenboard-sync-time
 SUDOERS
 chmod 440 /etc/sudoers.d/screenboard-agent
 visudo -cf /etc/sudoers.d/screenboard-agent

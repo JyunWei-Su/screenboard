@@ -10,7 +10,7 @@ app.use("*", requireAuth);
 app.get("/", async (c) => {
   const deviceId = c.req.query("device_id");
   const limit = Math.min(Number(c.req.query("limit") || "50"), 200);
-  let sql = "SELECT id, device_id, r2_key, trigger, analysis, taken_at FROM screenshots";
+  let sql = "SELECT id, device_id, r2_key, trigger, analysis, scene_id, scene_version, widget_errors, taken_at FROM screenshots";
   const binds: unknown[] = [];
   if (deviceId) {
     sql += " WHERE device_id = ?";

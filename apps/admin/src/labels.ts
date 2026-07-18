@@ -74,3 +74,80 @@ export const commandStatusLabels: Record<string, string> = {
   failed: "失敗",
   expired: "已逾期",
 };
+
+// ---- Scenes ----
+
+export const sceneStatusLabels: Record<string, string> = {
+  draft: "草稿",
+  published: "已發布",
+};
+
+export const widgetKindLabels: Record<string, string> = {
+  image: "圖片",
+  video: "影片",
+  web: "網頁",
+  text: "文字",
+  ticker: "跑馬燈",
+  direction: "動線指示",
+  clock: "時鐘",
+};
+
+export const objectFitLabels: Record<string, string> = {
+  contain: "完整顯示",
+  cover: "填滿裁切",
+  fill: "拉伸填滿",
+};
+
+export const webModeLabels: Record<string, string> = {
+  embed: "直接嵌入",
+  proxy: "本機代理",
+  open: "直接開啟",
+};
+
+export const alignLabels: Record<string, string> = {
+  left: "靠左",
+  center: "置中",
+  right: "靠右",
+};
+
+export const tickerDirectionLabels: Record<string, string> = {
+  left: "向左",
+  right: "向右",
+  up: "向上",
+  down: "向下",
+};
+
+// Arrow glyphs used when rendering direction widgets on the canvas.
+export const directionArrowGlyphs: Record<string, string> = {
+  up: "↑",
+  down: "↓",
+  left: "←",
+  right: "→",
+  "up-left": "↖",
+  "up-right": "↗",
+  "down-left": "↙",
+  "down-right": "↘",
+};
+
+export const directionArrowLabels: Record<string, string> = {
+  up: "上 ↑",
+  down: "下 ↓",
+  left: "左 ←",
+  right: "右 →",
+  "up-left": "左上 ↖",
+  "up-right": "右上 ↗",
+  "down-left": "左下 ↙",
+  "down-right": "右下 ↘",
+};
+
+export const clockFormatLabels: Record<string, string> = {
+  "24h": "24 小時制",
+  "12h": "12 小時制",
+};
+
+// Assignment source for schedules / device defaults.
+export const assignSourceLabels: Record<string, string> = {
+  playlist: "播放清單",
+  scene: "場景",
+  scene_playlist: "場景輪播",
+};

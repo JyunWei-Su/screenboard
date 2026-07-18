@@ -13,9 +13,9 @@ type DeviceInfo struct {
 }
 
 type EnrollRequest struct {
-	EnrollmentToken string      `json:"enrollment_token"`
-	Info            DeviceInfo  `json:"info"`
-	Display         *Display    `json:"display,omitempty"`
+	EnrollmentToken string     `json:"enrollment_token"`
+	Info            DeviceInfo `json:"info"`
+	Display         *Display   `json:"display,omitempty"`
 }
 
 type EnrollResponse struct {
@@ -76,9 +76,58 @@ type Heartbeat struct {
 }
 
 type PlaybackEvent struct {
-	Type         string `json:"type"` // "playback"
-	ItemID       *int   `json:"item_id"`
-	OK           bool   `json:"ok"`
-	BlackScreen  bool   `json:"black_screen,omitempty"`
-	BrowserError string `json:"browser_error,omitempty"`
+	Type         string            `json:"type"` // "playback"
+	ItemID       *int              `json:"item_id"`
+	OK           bool              `json:"ok"`
+	BlackScreen  bool              `json:"black_screen,omitempty"`
+	BrowserError string            `json:"browser_error,omitempty"`
+	SceneID      *int              `json:"scene_id,omitempty"`
+	SceneVersion *int              `json:"scene_version,omitempty"`
+	WidgetErrors map[string]string `json:"widget_errors,omitempty"`
+}
+
+// ---- Scenes (mirror of packages/shared/src/index.ts) ----
+
+type ResolvedSceneWidget struct {
+	ID     int                    `json:"id"`
+	Kind   string                 `json:"kind"`
+	X      int                    `json:"x"`
+	Y      int                    `json:"y"`
+	Width  int                    `json:"width"`
+	Height int                    `json:"height"`
+	Z      int                    `json:"z"`
+	Config map[string]interface{} `json:"config"`
+}
+
+type ResolvedScene struct {
+	SceneID    int                    `json:"scene_id"`
+	Name       string                 `json:"name"`
+	Width      int                    `json:"width"`
+	Height     int                    `json:"height"`
+	Background map[string]interface{} `json:"background"`
+	Widgets    []ResolvedSceneWidget  `json:"widgets"`
+	Version    *int                   `json:"version"`
+	Revision   string                 `json:"revision"`
+}
+
+type ResolvedScenePlaylistItem struct {
+	DwellSec int           `json:"dwell_sec"`
+	Scene    ResolvedScene `json:"scene"`
+}
+
+type ResolvedScenePlaylist struct {
+	ScenePlaylistID int                         `json:"scene_playlist_id"`
+	Name            string                      `json:"name"`
+	Loop            bool                        `json:"loop"`
+	Scenes          []ResolvedScenePlaylistItem `json:"scenes"`
+	Revision        string                      `json:"revision"`
+}
+
+// ResolvedTarget is what a device resolves to at any moment: exactly one of
+// playlist / scene / scene_playlist (or none).
+type ResolvedTarget struct {
+	Kind          string                 `json:"kind"` // playlist | scene | scene_playlist | none
+	Playlist      *ResolvedPlaylist      `json:"playlist,omitempty"`
+	Scene         *ResolvedScene         `json:"scene,omitempty"`
+	ScenePlaylist *ResolvedScenePlaylist `json:"scene_playlist,omitempty"`
 }

@@ -1,99 +1,53 @@
-# TODO — Cloudflare 瀏覽器 SSH 終端機
+# TODO — ScreenBoard
 
-## 目標
+## 場景（Scene）播放架構規劃
 
-從 ScreenBoard 的裝置詳情頁開啟 Cloudflare 提供的 **browser-rendered SSH terminal**。操作者只需要瀏覽器與 Cloudflare Access 登入，不需要安裝 WARP、`cloudflared` 或本機 SSH client。
+### 目標與命名
 
-> 這是「在網頁中操作 SSH」：管理台的按鈕開啟每台裝置的 Cloudflare SSH 終端機。它不是將第三方終端 iframe 嵌入到 ScreenBoard 頁面中。
+目前的「播放清單」一次只播放一個項目。後續改為以**場景（Scene）**作為完整畫面的單位：一個場景可同時顯示跑馬燈、影片、圖片、網頁 iframe、動線指示、文字或時鐘等區塊。
 
-## 已確認的正確架構
+- **媒體庫（Media）**：影片、圖片、網址、文字等原始素材。
+- **元件（Widget）**：可配置的顯示單位，例如影片、圖片、網頁、跑馬燈、動線指示、時鐘。
+- **場景（Scene）**：畫面版型與多個元件的位置、尺寸、層級、資料來源及行為設定。
+- **場景輪播清單（Scene playlist）**：需要輪播時，輪播的是完整場景，不是單一媒體。
+- **排程（Schedule）**：指定何時、對哪些群組或裝置套用場景或場景輪播清單。
 
-```
-ScreenBoard 管理台
-  -> https://ssh-<device-uuid>.<zone>
-  -> Cloudflare Access（self-hosted public application + browser-rendered SSH）
-  -> Cloudflare Tunnel（ssh://localhost:22）
-  -> 裝置上的 sshd
-```
+### A. 資料模型與 API
 
-- Cloudflare 的 browser-rendered SSH **只支援 self-hosted public application**；不是 Access for Infrastructure 的功能。
-- Access for Infrastructure 適用於使用者端有 WARP / Cloudflare One Client 的原生 SSH、細粒度 target policy 與 SSH command logging；它可與此方案共用 Tunnel，但不是本專案的必要條件。
-- 瀏覽器 SSH 只能設定在 hostname / subdomain，不能設定在 URL path。
+- [x] 建立 `scenes`：名稱、畫布尺寸／比例、背景設定、版本號、建立與更新時間。
+- [x] 建立 `scene_widgets`：所屬場景、元件類型、位置（x/y）、尺寸（width/height）、層級（z-index）、可見性、設定 JSON。
+- [x] 元件設定需有明確 schema；初期支援 `image`、`video`、`web`、`text`、`ticker`、`direction`、`clock`。
+- [x] `web` 元件保留來源模式：直接嵌入、Client 本機代理、直接開啟；本機代理具動態網域白名單、私網封鎖與 DNS pinning。
+- [x] 建立場景 CRUD、複製、草稿／發布、版本查詢 API；已發布版本不可被直接覆寫。
+- [x] 擴充排程／裝置指派，使目標可指向場景或場景輪播清單；同一時刻只解析出一個有效場景來源。
+- [x] API 回傳 Client 專用的「已解析場景」：包含畫布與元件資料、素材 URL、版本 revision；避免 Client 自行拼湊規則。
 
-官方文件：
+### B. 管理介面
 
-- [Browser-rendered terminal](https://developers.cloudflare.com/cloudflare-one/access-controls/applications/non-http/browser-rendering/)
-- [Connect to SSH in the browser](https://developers.cloudflare.com/cloudflare-one/networks/connectors/cloudflare-tunnel/use-cases/ssh/ssh-browser-rendering/)
-- [Self-hosted app short-lived certificates (legacy)](https://developers.cloudflare.com/cloudflare-one/access-controls/applications/non-http/short-lived-certificates-legacy/)
+- [ ] 新增「場景」頁面，提供列表、搜尋、複製、刪除與草稿／發布狀態。
+- [ ] 建立視覺化場景編輯器：畫布預覽、拖曳、縮放、對齊、圖層排序、鎖定與顯示／隱藏。
+- [ ] 元件屬性面板：素材選擇、文字與樣式、播放／更新週期、網頁來源與代理模式、跑馬燈方向／速度。
+- [ ] 提供桌面與裝置解析度預覽；顯示超出畫布、重疊、無素材與不可嵌入網址等警告。
+- [ ] 場景發布前提供預覽連結與版本差異確認；發布後可回退到前一個版本。
+- [ ] 排程與裝置詳情頁改為可選擇場景／場景輪播清單，但保留既有播放清單欄位供遷移期使用。
+
+### C. Client 播放器
+
+- [x] 將 Client 的播放模型從「單一項目切換」改為「場景 renderer + 多元件生命週期管理」。
+- [x] 接收場景 revision 後先在背景載入新元件；全部必要元件 ready 後才原子切換，保留舊場景直到新場景準備完成，避免黑畫面或淡入淡出閃爍。
+- [x] 各元件隔離錯誤：網頁載入失敗不可使影片、跑馬燈或動線指示停止；畫面顯示可理解的元件錯誤狀態。
+- [x] 影片元件處理自動播放、靜音、循環、素材快取與播放事件回報。
+- [x] 跑馬燈／文字／時鐘使用 Client 本地渲染；無網路時仍可按最後場景持續顯示。
+- [x] 網頁元件支援 iframe 限制偵測與本機代理模式；不得用代理開放存取 Client 私有網路。
+- [x] 健康回報增加目前場景 ID／版本、各元件載入錯誤摘要；截圖應保留場景資訊供除錯。
+
+### D. 相容、遷移與驗收
+
+- [x] 第一階段維持既有播放清單播放器；未指派場景的裝置行為完全不變。
+- [x] 提供「從播放清單建立場景輪播」工具：每個現有項目轉成單元件場景，保留原排序與停留秒數。
+- [ ] 先以單一測試群組啟用場景模式，可快速退回舊播放清單。
+- [ ] 驗證同時顯示影片、跑馬燈、網頁與動線指示時的 CPU／記憶體使用量與長時間穩定性。
+- [ ] 驗證網路中斷、素材更新、場景發布、Client 重啟與 iframe 被拒絕嵌入時，畫面都不會閃黑。
+- [ ] 完成後才將「播放清單」介面更名或收斂為「場景輪播清單」；舊資料需保留可回復的遷移紀錄。
 
 ---
-
-## 現況盤點
-
-### 已完成
-
-- [x] `provisionRemoteAccess` 建立每台裝置專屬的 remotely-managed Cloudflare Tunnel。
-- [x] Tunnel ingress 為 `ssh://localhost:22`，並建立一層子網域 `ssh-<uuid>.<zone>`；符合 Universal SSL 的覆蓋範圍。
-- [x] 建立 `type: "ssh"` 的 browser SSH Access app、Allow email policy 與 app 專屬 CA。
-- [x] 管理台已有 **Open SSH terminal** 按鈕，會開啟該 hostname。
-- [x] 安裝程式安裝 `openssh-server`、停用 root 與密碼登入、安裝並啟動每台裝置的 `cloudflared` connector。
-- [x] 裝置刪除與重新佈建會清理／重建 Tunnel、DNS 與 Access app。
-
-### 尚未完成／目前會阻塞登入
-
-- [ ] 尚未針對已部署裝置完成重新佈建與 installer 升級；新流程會自動設定 Access app、CA 與 Linux 操作帳號。
-- [ ] 尚未驗證已部署的 Access app policy 是否只有 Allow／Block，也尚未以授權與未授權帳號實測。
-
----
-
-## 實作待辦
-
-### A. Cloudflare Access app 自動佈建
-
-- [ ] 在 Zero Trust 建立或確認可用的 Identity Provider（Email OTP 或既有 IdP）。
-- [x] `provisionRemoteAccess` 建立 app 時使用 `type: "ssh"`，自動啟用 browser-rendered SSH；保留 public hostname destination。
-- [x] 對既有 `self_hosted` app 以 `provisioning_version` 觸發安全的重新佈建。
-- [ ] 確認 app 僅有 Allow／Block policy，且 Allow policy 限制 `CF_ACCESS_ALLOWED_EMAILS` 中的操作者。
-- [x] 建立 app 後呼叫 `POST /accounts/{account}/access/apps/{app_id}/ca`，自動產生該 app 的 short-lived certificate CA，保存其 **公開** CA key。
-- [ ] 不得把帳號層 `gateway_ca` 當成 browser SSH app 的 CA。
-
-### B. API 與資料模型
-
-- [x] 擴充 `device_remote_access`，保存 app 專屬 CA public key 與升版用 `provisioning_version`。
-- [ ] 將現有記錄升版為「需要轉換 `ssh` app type + 安裝 app CA」；管理台顯示明確的遷移狀態，而不是只判斷 hostname。
-- [x] 經 device token 驗證的端點會提供自身 Access app 的 **公開** CA key；不會回傳 Cloudflare API token 或任何私密金鑰。
-- [ ] `GET /devices/:uuid/remote-access` 回傳可操作狀態：Tunnel、Access app、browser rendering、CA 安裝版本與可開啟的 hostname。
-- [ ] 若 `CF_ACCESS_ALLOWED_EMAILS` 為空，讓 API 明確回報設定錯誤；目前雖安全地 default-deny，但會建立無人可登入的 app。
-
-### C. 裝置安裝與修復
-
-- [x] installer 依 `CF_ACCESS_ALLOWED_EMAILS` 建立 email 前綴對應的無 sudo Linux 帳號，不使用 kiosk 帳號。
-- [x] 將 device-facing API 的 CA public key 寫入 `/etc/ssh/screenboard_access_ca.pub`，設定安全權限。
-- [x] 在 `/etc/ssh/sshd_config.d/50-screenboard.conf` 加入 `TrustedUserCAKeys /etc/ssh/screenboard_access_ca.pub`，並 reload `sshd`。
-- [ ] 保持 `PermitRootLogin no`、`PasswordAuthentication no`、`KbdInteractiveAuthentication no`；不要為了 browser terminal 重新開啟密碼登入。
-- [ ] 擴充 `screenboard-repair-tunnel` 或新增獨立 helper，使 CA 更新與 sshd reload 可由裝置 command channel 修復；Tunnel 修復與 SSH 認證修復需可分辨。
-
-### D. 管理台與操作流程
-
-- [ ] 保留「Open SSH terminal」新分頁行為；這是 Cloudflare 支援的 clientless terminal 入口。
-- [ ] 顯示瀏覽器 SSH readiness：Tunnel healthy、Access policy 已配置、browser rendering 已啟用、裝置 CA 版本相符。
-- [ ] 顯示 Access app 類型與 CA readiness；正常流程不需要 Cloudflare Dashboard 的手動設定。
-- [ ] 不假設 Cloudflare 的終端機可以安全 iframe 嵌入 ScreenBoard 管理台；若未來需要內嵌，另行評估 CSP／frame-ancestors 與自行實作 xterm.js proxy 的安全性。
-
-### E. 遷移與驗證
-
-- [ ] 對既有裝置：將 self-hosted app 自動轉為 `type: "ssh"`，再更新裝置 CA 與 sshd；不遷移至 Infrastructure app。
-- [ ] 以單一測試裝置驗證：
-  - [ ] 授權 email：Access 登入後出現終端機，並能以短期憑證登入指定 Linux 帳號。
-  - [ ] 未授權 email：在 Access 層被拒絕。
-  - [ ] Tunnel 停止：管理台顯示非 healthy，終端不可連線。
-  - [ ] CA 不相符：可從 sshd journal 辨識認證失敗，更新 CA 後恢復。
-  - [ ] `repair_tunnel`、重新佈建、刪除裝置不會遺留 Tunnel／DNS／Access app。
-- [ ] 更新 README、DEPLOY 文件：加入 browser-rendering 與每 app CA 設定，並說明 ScreenBoard TOTP 與 Cloudflare Access 是兩套獨立驗證。
-
-## 非本階段範圍
-
-- Access for Infrastructure、Targets、private network routes、WARP split tunnel、`gateway_ca` 與 SSH command logging。
-- SSH 終端 iframe 內嵌到 ScreenBoard admin。
-
-若未來需要「原生 SSH + WARP + 短期憑證 + command logging」，可另建 Access for Infrastructure，並共用現有 Tunnel；不要替換 browser SSH 路線。

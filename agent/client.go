@@ -163,6 +163,25 @@ func (c *Client) GetPlaylist() (*ResolvedPlaylist, error) {
 	return out, nil
 }
 
+// GetTarget fetches the single effective playback target (playlist / scene /
+// scene_playlist / none). A non-200 (e.g. an older API without this endpoint)
+// is reported as an error so the caller can fall back to GetPlaylist.
+func (c *Client) GetTarget() (*ResolvedTarget, error) {
+	resp, err := c.do("GET", "/api/agent/target", "", nil)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		return nil, fmt.Errorf("target: %s", resp.Status)
+	}
+	out := &ResolvedTarget{}
+	if err := json.NewDecoder(resp.Body).Decode(out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *Client) PostScreenshot(png []byte, trigger, analysis string) error {
 	path := "/api/agent/screenshot?trigger=" + trigger
 	if analysis != "" {

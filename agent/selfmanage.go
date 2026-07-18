@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"os/exec"
+	"strings"
 	"syscall"
 )
 
@@ -13,6 +14,7 @@ import (
 const (
 	repairTunnelHelper = "/usr/local/bin/screenboard-repair-tunnel"
 	reinstallHelper    = "/usr/local/bin/screenboard-reinstall"
+	syncTimeHelper     = "/usr/local/bin/screenboard-sync-time"
 )
 
 // RepairTunnel re-fetches this device's Cloudflare Tunnel token and reinstalls
@@ -40,4 +42,22 @@ func Reinstall() error {
 	cmd := exec.Command("sudo", "-n", reinstallHelper)
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	return cmd.Start()
+}
+
+// SyncTime asks a root-owned helper to enable and restart the operating
+// system's managed NTP client. The command has no caller-controlled arguments,
+// so an admin command can never become arbitrary privileged shell execution.
+func SyncTime() (string, error) {
+	if _, err := exec.LookPath("sudo"); err != nil {
+		return "", fmt.Errorf("sudo unavailable: %w", err)
+	}
+	out, err := exec.Command("sudo", "-n", syncTimeHelper).CombinedOutput()
+	detail := strings.TrimSpace(string(out))
+	if len(detail) > 500 {
+		detail = detail[:500]
+	}
+	if err != nil {
+		return "", fmt.Errorf("%v: %s", err, detail)
+	}
+	return detail, nil
 }

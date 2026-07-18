@@ -4,7 +4,7 @@ import { api, contentUrl } from "../api";
 import { useFetch } from "../hooks";
 import { canWrite, useAuth } from "../auth";
 import { TableCard } from "../components/ui";
-import { commandStatusLabels, label, tunnelStatusLabels } from "../labels";
+import { assignSourceLabels, commandStatusLabels, label, tunnelStatusLabels } from "../labels";
 import { StatusBadge } from "./Devices";
 
 interface Device {
@@ -20,6 +20,11 @@ interface Device {
   resolution: string;
   group_id: number | null;
   playlist_id: number | null;
+  // New scene assignment fields (migration 0008). `source_type` drives which one
+  // is active; the API clears the other two when the source type is switched.
+  source_type?: "playlist" | "scene" | "scene_playlist";
+  scene_id?: number | null;
+  scene_playlist_id?: number | null;
   display: string;
   agent_settings: string;
   last_seen_at: string | null;
@@ -51,6 +56,7 @@ const COMMANDS: { type: string; label: string; danger?: boolean }[] = [
   { type: "switch_playlist", label: "重新同步播放清單" },
   { type: "take_screenshot", label: "截圖" },
   { type: "check_update", label: "立即檢查更新" },
+  { type: "sync_time", label: "NTP 對時" },
   { type: "repair_tunnel", label: "修復 SSH 連線" },
   { type: "reboot", label: "重新開機", danger: true },
   { type: "shutdown", label: "關機", danger: true },
@@ -79,6 +85,8 @@ export default function DeviceDetail() {
   );
   const { data: groups } = useFetch<NamedRow[]>("/api/groups");
   const { data: playlists } = useFetch<NamedRow[]>("/api/playlists");
+  const { data: scenes } = useFetch<NamedRow[]>("/api/scenes");
+  const { data: scenePlaylists } = useFetch<NamedRow[]>("/api/scene-playlists");
   const { data: remoteAccess, reload: reloadRemoteAccess } = useFetch<RemoteAccess>(
     writable ? `/api/devices/${uuid}/remote-access` : null,
   );
@@ -278,18 +286,85 @@ export default function DeviceDetail() {
                 <option key={g.id} value={g.id}>{g.name}</option>
               ))}
             </select>
-            <label className="mb-1 block text-xs text-slate-500">預設播放清單</label>
+            <label className="mb-1 block text-xs text-slate-500">指派來源</label>
             <select
-              className="input"
+              className="input mb-2"
               disabled={!writable}
-              value={d.playlist_id ?? ""}
-              onChange={(e) => patch({ playlist_id: e.target.value ? Number(e.target.value) : null })}
+              value={d.source_type ?? "playlist"}
+              onChange={(e) => {
+                const st = e.target.value as "playlist" | "scene" | "scene_playlist";
+                // Keep any id already stored for that source type when switching.
+                const keep =
+                  st === "playlist"
+                    ? { playlist_id: d.playlist_id ?? null }
+                    : st === "scene"
+                      ? { scene_id: d.scene_id ?? null }
+                      : { scene_playlist_id: d.scene_playlist_id ?? null };
+                patch({ source_type: st, ...keep });
+              }}
             >
-              <option value="">— 無 —</option>
-              {(playlists ?? []).map((p) => (
-                <option key={p.id} value={p.id}>{p.name}</option>
-              ))}
+              <option value="playlist">{label(assignSourceLabels, "playlist")}</option>
+              <option value="scene">{label(assignSourceLabels, "scene")}</option>
+              <option value="scene_playlist">{label(assignSourceLabels, "scene_playlist")}</option>
             </select>
+
+            {(d.source_type ?? "playlist") === "playlist" && (
+              <select
+                className="input"
+                disabled={!writable}
+                value={d.playlist_id ?? ""}
+                onChange={(e) =>
+                  patch({
+                    source_type: "playlist",
+                    playlist_id: e.target.value ? Number(e.target.value) : null,
+                  })
+                }
+              >
+                <option value="">— 無 —</option>
+                {(playlists ?? []).map((p) => (
+                  <option key={p.id} value={p.id}>{p.name}</option>
+                ))}
+              </select>
+            )}
+            {d.source_type === "scene" && (
+              <select
+                className="input"
+                disabled={!writable}
+                value={d.scene_id ?? ""}
+                onChange={(e) =>
+                  patch({
+                    source_type: "scene",
+                    scene_id: e.target.value ? Number(e.target.value) : null,
+                  })
+                }
+              >
+                <option value="">— 無 —</option>
+                {(scenes ?? []).map((s) => (
+                  <option key={s.id} value={s.id}>{s.name}</option>
+                ))}
+              </select>
+            )}
+            {d.source_type === "scene_playlist" && (
+              <select
+                className="input"
+                disabled={!writable}
+                value={d.scene_playlist_id ?? ""}
+                onChange={(e) =>
+                  patch({
+                    source_type: "scene_playlist",
+                    scene_playlist_id: e.target.value ? Number(e.target.value) : null,
+                  })
+                }
+              >
+                <option value="">— 無 —</option>
+                {(scenePlaylists ?? []).map((s) => (
+                  <option key={s.id} value={s.id}>{s.name}</option>
+                ))}
+              </select>
+            )}
+            <p className="mt-2 text-xs text-slate-400">
+              裝置同一時刻只會解析出一個有效來源。切換來源類型會清除其他來源的指派。播放清單欄位於遷移期間保留。
+            </p>
           </div>
 
           <div>

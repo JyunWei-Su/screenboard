@@ -8,6 +8,10 @@ import DeviceDetail from "./pages/DeviceDetail";
 import Groups from "./pages/Groups";
 import Playlists from "./pages/Playlists";
 import PlaylistEditor from "./pages/PlaylistEditor";
+import Scenes from "./pages/Scenes";
+import SceneEditor from "./pages/SceneEditor";
+import ScenePlaylists from "./pages/ScenePlaylists";
+import ScenePlaylistEditor from "./pages/ScenePlaylistEditor";
 import Media from "./pages/Media";
 import Schedules from "./pages/Schedules";
 import Ota from "./pages/Ota";
@@ -30,6 +34,10 @@ export default function App() {
         <Route path="/groups" element={<Groups />} />
         <Route path="/playlists" element={<Playlists />} />
         <Route path="/playlists/:id" element={<PlaylistEditor />} />
+        <Route path="/scenes" element={<Scenes />} />
+        <Route path="/scenes/:id" element={<SceneEditor />} />
+        <Route path="/scene-playlists" element={<ScenePlaylists />} />
+        <Route path="/scene-playlists/:id" element={<ScenePlaylistEditor />} />
         <Route path="/media" element={<Media />} />
         <Route path="/schedules" element={<Schedules />} />
         <Route path="/ota" element={<Ota />} />

@@ -2,10 +2,10 @@
 -- Apply with: wrangler d1 execute screenboard --local --file=./seed.sql
 -- (Create the first admin via POST /api/auth/bootstrap, not here.)
 
-INSERT INTO groups (name, type, parent_id) VALUES ('Taipei Factory', 'site', NULL);
-INSERT INTO groups (name, type, parent_id) VALUES ('Production', 'department', 1);
-INSERT INTO groups (name, type, parent_id) VALUES ('Warehouse', 'department', 1);
-INSERT INTO groups (name, type, parent_id) VALUES ('Lobby', 'department', 1);
+INSERT INTO groups (name) VALUES ('Taipei Factory');
+INSERT INTO groups (name) VALUES ('Production');
+INSERT INTO groups (name) VALUES ('Warehouse');
+INSERT INTO groups (name) VALUES ('Lobby');
 
 INSERT INTO playlists (name, loop) VALUES ('KPI Dashboard', 1);
 INSERT INTO playlist_items (playlist_id, type, url, duration_sec, order_index)

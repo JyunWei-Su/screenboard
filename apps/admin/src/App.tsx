@@ -6,6 +6,7 @@ import Dashboard from "./pages/Dashboard";
 import Devices from "./pages/Devices";
 import DeviceDetail from "./pages/DeviceDetail";
 import Groups from "./pages/Groups";
+import GroupDetail from "./pages/GroupDetail";
 import Scenes from "./pages/Scenes";
 import SceneEditor from "./pages/SceneEditor";
 import ScenePlaylists from "./pages/ScenePlaylists";
@@ -30,6 +31,7 @@ export default function App() {
         <Route path="/devices" element={<Devices />} />
         <Route path="/devices/:uuid" element={<DeviceDetail />} />
         <Route path="/groups" element={<Groups />} />
+        <Route path="/groups/:id" element={<GroupDetail />} />
         <Route path="/scenes" element={<Scenes />} />
         <Route path="/scenes/:id" element={<SceneEditor />} />
         <Route path="/scene-playlists" element={<ScenePlaylists />} />

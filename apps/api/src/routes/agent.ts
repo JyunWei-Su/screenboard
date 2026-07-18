@@ -230,21 +230,8 @@ app.get("/update", async (c) => {
     const dev = await c.env.DB.prepare("SELECT group_id FROM devices WHERE uuid = ?")
       .bind(uuid)
       .first<{ group_id: number | null }>();
-    const rows = await c.env.DB.prepare("SELECT id, parent_id FROM groups").all<{
-      id: number;
-      parent_id: number | null;
-    }>();
-    const parentOf = new Map<number, number | null>();
-    for (const r of rows.results) parentOf.set(r.id, r.parent_id);
-    let cur = dev?.group_id ?? null;
-    const target = Number(deployment.target);
-    while (cur != null) {
-      if (cur === target) {
-        covered = true;
-        break;
-      }
-      cur = parentOf.get(cur) ?? null;
-    }
+    // Groups are flat: a group deployment covers devices assigned to that group.
+    covered = dev?.group_id != null && dev.group_id === Number(deployment.target);
   }
   if (!covered) return c.json(none);
 

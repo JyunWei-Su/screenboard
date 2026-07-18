@@ -50,23 +50,10 @@ interface TargetDeviceRow {
   scene_playlist_id: number | null;
 }
 
-// Collect a group's ancestor chain (including itself) so a schedule on a parent
-// group applies to devices in child groups.
-async function ancestorGroupIds(env: Env, groupId: number | null): Promise<Set<string>> {
-  const ids = new Set<string>();
-  if (groupId == null) return ids;
-  const rows = await env.DB.prepare("SELECT id, parent_id FROM groups").all<{
-    id: number;
-    parent_id: number | null;
-  }>();
-  const parentOf = new Map<number, number | null>();
-  for (const r of rows.results) parentOf.set(r.id, r.parent_id);
-  let cur: number | null = groupId;
-  while (cur != null && !ids.has(String(cur))) {
-    ids.add(String(cur));
-    cur = parentOf.get(cur) ?? null;
-  }
-  return ids;
+// Groups are a flat list (no nesting): a group-targeted schedule applies only to
+// devices assigned directly to that group.
+function targetGroupIds(groupId: number | null): Set<string> {
+  return groupId == null ? new Set<string>() : new Set([String(groupId)]);
 }
 
 function scheduleMatches(s: ScheduleWindow, now: Date): boolean {
@@ -95,7 +82,7 @@ export async function resolvePlaylistId(
   device: DeviceRow,
   now = new Date(),
 ): Promise<number | null> {
-  const groupIds = await ancestorGroupIds(env, device.group_id);
+  const groupIds = targetGroupIds(device.group_id);
   const schedules = await env.DB.prepare("SELECT * FROM schedules").all<ScheduleRow>();
 
   let best: { playlist_id: number; priority: number; specific: number } | null = null;
@@ -386,7 +373,7 @@ export async function resolveTarget(
   device: TargetDeviceRow,
   now = new Date(),
 ): Promise<ResolvedTarget> {
-  const groupIds = await ancestorGroupIds(env, device.group_id);
+  const groupIds = targetGroupIds(device.group_id);
   const schedules = await env.DB.prepare("SELECT * FROM schedules").all<ScheduleSourceRow>();
 
   let best:

@@ -25,14 +25,6 @@ export const roleLabels: Record<string, string> = {
   operator: "操作員",
 };
 
-export const groupTypeLabels: Record<string, string> = {
-  site: "場域",
-  building: "建築",
-  floor: "樓層",
-  department: "部門",
-  custom: "自訂",
-};
-
 export const mediaTypeLabels: Record<string, string> = {
   image: "圖片",
   video: "影片",

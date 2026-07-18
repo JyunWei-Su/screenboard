@@ -5,8 +5,6 @@ export type Role = "admin" | "operator";
 
 export type DeviceStatus = "online" | "offline" | "warning" | "maintenance";
 
-export type GroupType = "site" | "building" | "floor" | "department" | "custom";
-
 export type MediaType = "url" | "image" | "video" | "pdf" | "html";
 
 export type OtaChannel = "stable" | "beta";

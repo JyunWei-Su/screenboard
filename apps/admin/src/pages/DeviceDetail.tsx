@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { useParams, Link, useNavigate } from "react-router-dom";
 import { api, apiBase, contentUrl } from "../api";
 import { useFetch } from "../hooks";
+import { useDeviceStream } from "../realtime";
 import { canWrite, useAuth } from "../auth";
 import { TableCard } from "../components/ui";
 import { assignSourceLabels, commandStatusLabels, label, tunnelStatusLabels } from "../labels";
@@ -91,7 +92,13 @@ export default function DeviceDetail() {
   const isAdmin = user?.role === "admin";
   const { showToast } = useToast();
   const uninstallCommand = `curl -fsSL ${apiBase() || "https://YOUR-API"}/uninstall.sh | sudo bash`;
-  const { data: d, reload } = useFetch<Device>(`/api/devices/${uuid}`);
+  const { data: d, reload, setData: setDevice } = useFetch<Device>(`/api/devices/${uuid}`);
+  // Live presence for this one device: flip the badge on push, re-sync on connect.
+  useDeviceStream({
+    onReady: reload,
+    onEvent: (e) =>
+      setDevice((prev) => (prev && prev.uuid === e.uuid ? { ...prev, status: e.status } : prev)),
+  });
   const { data: shots, reload: reloadShots } = useFetch<ScreenshotRow[]>(
     `/api/screenshots?device_id=${uuid}&limit=12`,
   );

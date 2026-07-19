@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"runtime"
 	"strings"
 	"time"
 )
@@ -164,7 +165,9 @@ func (c *Client) PostScreenshot(png []byte, trigger, analysis string) error {
 }
 
 func (c *Client) CheckUpdate(current string) (*OtaUpdate, error) {
-	path := fmt.Sprintf("/api/agent/update?channel=%s&current=%s", c.cfg.Channel, current)
+	// runtime.GOARCH ("amd64"/"arm64") lets the server hand back the binary for
+	// this device's CPU rather than whatever build was uploaded last.
+	path := fmt.Sprintf("/api/agent/update?channel=%s&current=%s&arch=%s", c.cfg.Channel, current, runtime.GOARCH)
 	resp, err := c.do("GET", path, "", nil)
 	if err != nil {
 		return nil, err

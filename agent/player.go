@@ -33,8 +33,10 @@ type Player struct {
 	target       *ResolvedTarget   // full resolved target (served at /target.json)
 	fileMap      map[int]string    // playlist item id / scene media id -> local cached file path
 	proxyAllow   map[string]bool   // hostnames the active scene may proxy through
-	notification PlayerNotification
-	server       *http.Server
+	notification  PlayerNotification
+	channelOnline bool // WS command channel up
+	linkUp        bool // physical network link (carrier) present
+	server        *http.Server
 
 	browser *Browser      // supervises the kiosk browser process
 	cache   *CacheManager // media cache with retention + byte cap
@@ -58,6 +60,10 @@ func NewPlayer(cfg *Config, client *Client) *Player {
 		fileMap:    map[int]string{},
 		proxyAllow: map[string]bool{},
 		cache:      NewCacheManager(cfg, client),
+		// Assume connected until the signals say otherwise, so a booting device
+		// doesn't flash the offline badge before its first connect / link check.
+		channelOnline: true,
+		linkUp:        true,
 	}
 	// The browser is relaunched with the current display settings; reapply
 	// rotation before each launch so an orientation change survives a restart.
@@ -107,6 +113,7 @@ func (p *Player) StartServer() {
 	mux.HandleFunc("/proxy", p.handleProxy)
 	mux.HandleFunc("/event", p.handleEvent)
 	mux.HandleFunc("/notification.json", p.handleNotification)
+	mux.HandleFunc("/status.json", p.handleStatus)
 
 	addr := fmt.Sprintf("127.0.0.1:%d", p.cfg.PlayerPort)
 	server := &http.Server{Addr: addr, Handler: mux}
@@ -127,6 +134,36 @@ func (p *Player) handleNotification(w http.ResponseWriter, _ *http.Request) {
 	p.mu.Unlock()
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(notice)
+}
+
+// handleStatus reports the live connectivity state the kiosk page polls to show
+// or hide the "目前離線" badge.
+func (p *Player) handleStatus(w http.ResponseWriter, _ *http.Request) {
+	p.mu.Lock()
+	// Offline if the command channel is down OR the physical link is gone. The
+	// link signal is the faster, unambiguous one when a cable is pulled.
+	online := p.channelOnline && p.linkUp
+	p.mu.Unlock()
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]bool{"online": online})
+}
+
+// SetChannelOnline records whether the WS command channel to the server is up.
+// The kiosk shows "目前離線" whenever the device is offline, so an on-site viewer
+// can tell the screen is running on cached content, not live data.
+func (p *Player) SetChannelOnline(online bool) {
+	p.mu.Lock()
+	p.channelOnline = online
+	p.mu.Unlock()
+}
+
+// SetLinkUp records whether the device has a physical network link (carrier).
+// A pulled cable or dropped Wi-Fi clears this within one link-monitor tick —
+// much faster than waiting for the command channel's heartbeat to fail.
+func (p *Player) SetLinkUp(up bool) {
+	p.mu.Lock()
+	p.linkUp = up
+	p.mu.Unlock()
 }
 
 // Notify places a status message in the lower-left of the kiosk display.

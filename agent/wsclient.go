@@ -19,14 +19,24 @@ type WSClient struct {
 	cfg     *Config
 	client  *Client
 	handler CommandHandler
+	// onStatus reports whether the command channel is currently up. It drives
+	// the kiosk's "目前離線" badge, so it flips false the moment the socket drops
+	// and true again on reconnect.
+	onStatus func(online bool)
 
 	mu              sync.Mutex
 	conn            *websocket.Conn
 	heartbeatUpdate chan time.Duration
 }
 
-func NewWSClient(cfg *Config, client *Client, handler CommandHandler) *WSClient {
-	return &WSClient{cfg: cfg, client: client, handler: handler, heartbeatUpdate: make(chan time.Duration, 1)}
+func NewWSClient(cfg *Config, client *Client, handler CommandHandler, onStatus func(online bool)) *WSClient {
+	return &WSClient{cfg: cfg, client: client, handler: handler, onStatus: onStatus, heartbeatUpdate: make(chan time.Duration, 1)}
+}
+
+func (w *WSClient) notifyStatus(online bool) {
+	if w.onStatus != nil {
+		w.onStatus(online)
+	}
 }
 
 // Run connects and blocks, reconnecting with backoff until ctx is cancelled.
@@ -40,6 +50,7 @@ func (w *WSClient) Run(ctx context.Context) error {
 			if ctx.Err() != nil {
 				return nil
 			}
+			w.notifyStatus(false)
 			log.Printf("ws: %v (retry in %s)", err, backoff)
 			t := time.NewTimer(backoff)
 			select {
@@ -78,6 +89,7 @@ func (w *WSClient) connectAndServe(ctx context.Context) error {
 	w.mu.Lock()
 	w.conn = conn
 	w.mu.Unlock()
+	w.notifyStatus(true)
 	log.Printf("ws connected")
 	serveDone := make(chan struct{})
 	go func() {
@@ -121,7 +133,19 @@ func (w *WSClient) heartbeat(ctx context.Context, stop <-chan struct{}) {
 			t.Stop()
 			t = time.NewTicker(next)
 		case <-t.C:
-			_ = w.send(Heartbeat{Type: "heartbeat"})
+			if err := w.send(Heartbeat{Type: "heartbeat"}); err != nil {
+				// A failed heartbeat write means the socket is dead even if the
+				// read side hasn't noticed yet (silent network drop). Close it so
+				// the read loop unblocks, Run reconnects, and the kiosk shows
+				// offline promptly instead of after the TCP timeout.
+				w.mu.Lock()
+				conn := w.conn
+				w.mu.Unlock()
+				if conn != nil {
+					_ = conn.Close()
+				}
+				return
+			}
 		}
 	}
 }

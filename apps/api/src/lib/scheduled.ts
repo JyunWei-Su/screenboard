@@ -1,5 +1,6 @@
 import type { Env } from "../types";
 import { recordEvent } from "./notify";
+import { broadcastDeviceStatus } from "./presence";
 
 // Backstop for the Durable Object watchdog: flip stale devices to offline.
 export async function sweepOffline(env: Env): Promise<void> {
@@ -21,6 +22,8 @@ export async function sweepOffline(env: Env): Promise<void> {
       severity: "critical",
       message: "Device went offline (no heartbeat)",
     });
+    // Push live too, so anything the watchdog missed still updates open consoles.
+    await broadcastDeviceStatus(env, d.uuid, "offline");
   }
 }
 

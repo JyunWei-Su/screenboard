@@ -53,11 +53,27 @@
   #notification.success { background: rgba(5, 100, 64, .95); }
   #notification.warning { background: rgba(146, 64, 14, .96); }
   #notification.error { background: rgba(153, 27, 27, .96); }
+
+  /* Offline badge: pinned lower-left, shown whenever the agent loses its live
+     channel to the server. It sits below the notification slot; when both are
+     present the notification is nudged up so they stack rather than overlap. */
+  #offline {
+    position: fixed; left: 24px; bottom: 24px; z-index: 30;
+    display: none; align-items: center; gap: 9px;
+    padding: 11px 17px; border-radius: 10px; color: #fff;
+    background: rgba(120, 20, 20, .94); box-shadow: 0 8px 28px rgba(0, 0, 0, .45);
+    font: 600 16px/1 "Noto Sans CJK TC", "Noto Sans CJK SC", system-ui, sans-serif;
+  }
+  #offline.show { display: flex; }
+  #offline .dot { width: 9px; height: 9px; border-radius: 50%; background: #fca5a5; animation: sb-pulse 1.4s ease-in-out infinite; }
+  @keyframes sb-pulse { 0%, 100% { opacity: 1; } 50% { opacity: .3; } }
+  body.offline #notification.show { bottom: 78px; }
 </style>
 </head>
 <body>
 <div id="stage"><div id="idle">ScreenBoard</div></div>
 <div id="notification" role="status" aria-live="polite"></div>
+<div id="offline" role="status" aria-live="polite"><span class="dot"></span>目前離線</div>
 <script>
 (() => {
   // ---- Environment: the Go agent serves this page and caches media locally. ----
@@ -65,6 +81,7 @@
   const SRC = (u) => u || '';        // local media already resolved to /media/<id>
   const stage = document.getElementById('stage');
   const notification = document.getElementById('notification');
+  const offlineEl = document.getElementById('offline');
 
   const WIDGET_TIMEOUT = 6000;       // per-widget ready cap (image/video/bg)
   const WEB_TIMEOUT = 9000;          // iframe load cap (embedding may be refused)
@@ -77,6 +94,17 @@
   window.addEventListener('error', (e) => {
     report({ type: 'playback', ok: false, browser_error: String((e && e.message) || 'error') });
   });
+
+  // ---- Kiosk lockdown: swallow browser function-key shortcuts an on-site
+  // viewer might hit — F1 (help), F3 (find bar), F6 (focus toolbar), F7 (caret
+  // browsing), F8, F10 (menu), F11 (exit fullscreen). The capture phase +
+  // preventDefault stops Chromium acting on them before the page sees the key.
+  // (Keys typed inside a cross-origin widget iframe can't be intercepted from
+  // here — that's a browser sandbox boundary.) ----
+  const BLOCKED_KEYS = new Set(['F1', 'F3', 'F6', 'F7', 'F8', 'F10', 'F11']);
+  window.addEventListener('keydown', (e) => {
+    if (BLOCKED_KEYS.has(e.key)) { e.preventDefault(); e.stopPropagation(); }
+  }, true);
 
   // ================= shared rendering engine =================
 
@@ -683,10 +711,34 @@
     } catch (_) { /* local player may briefly restart */ }
   }
 
+  // ---- Offline badge: reflects the agent's live channel to the server. ----
+  let offlinePending = null;
+  function setOffline(show) {
+    offlineEl.classList.toggle('show', show);
+    document.body.classList.toggle('offline', show);
+  }
+  async function pollStatus() {
+    let online = true;
+    try {
+      const r = await fetch('/status.json', { cache: 'no-store' });
+      if (r.ok) { const j = await r.json(); online = j.online !== false; }
+    } catch (_) { /* local server briefly restarting: don't flap to offline */ }
+    if (online) {
+      if (offlinePending) { clearTimeout(offlinePending); offlinePending = null; }
+      setOffline(false);
+    } else if (!offlineEl.classList.contains('show') && !offlinePending) {
+      // Debounce: only surface offline after it persists a few seconds, so a
+      // 1–2s reconnect blip (token refresh, brief network drop) never flashes it.
+      offlinePending = setTimeout(() => { offlinePending = null; setOffline(true); }, 4000);
+    }
+  }
+
   poll();
   setInterval(poll, 5000);
   pollNotification();
   setInterval(pollNotification, 250);
+  pollStatus();
+  setInterval(pollStatus, 1000);
 })();
 </script>
 </body>

@@ -2,6 +2,7 @@ import { useState } from "react";
 import { Link } from "react-router-dom";
 import { api, apiBase } from "../api";
 import { useFetch } from "../hooks";
+import { useDeviceStream } from "../realtime";
 import { canWrite, useAuth } from "../auth";
 import { EmptyRow, PageHeader, TableCard } from "../components/ui";
 import { label, statusLabels } from "../labels";
@@ -48,9 +49,19 @@ export default function Devices() {
   const { user } = useAuth();
   const isAdmin = user?.role === "admin";
   const { showToast } = useToast();
-  const { data, loading, reload } = useFetch<DeviceRow[]>("/api/devices");
+  const { data, loading, reload, setData } = useFetch<DeviceRow[]>("/api/devices");
   const [token, setToken] = useState<string | null>(null);
   const [expiresMin, setExpiresMin] = useState(10);
+
+  // Live presence: the badge flips the moment the server pushes a transition;
+  // on every (re)connect we re-sync the full list to catch anything missed.
+  useDeviceStream({
+    onReady: reload,
+    onEvent: (e) =>
+      setData((prev) =>
+        prev ? prev.map((d) => (d.uuid === e.uuid ? { ...d, status: e.status } : d)) : prev,
+      ),
+  });
 
   // Codes are stored canonically (ABCD123456); show them hyphenated for reading.
   const codeDisplay = token ? `${token.slice(0, 4)}-${token.slice(4)}` : "";

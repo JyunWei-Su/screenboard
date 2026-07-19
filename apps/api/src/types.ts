@@ -5,10 +5,12 @@ export interface Env {
   DB: D1Database;
   BUCKET: R2Bucket;
   DEVICE_CONN: DurableObjectNamespace;
+  PRESENCE_HUB: DurableObjectNamespace;
 
   // Vars
   HEALTH_RETENTION_DAYS: string;
   OFFLINE_TIMEOUT_SECONDS: string;
+  OFFLINE_DISCONNECT_GRACE_SECONDS: string;
   PUBLIC_API_URL: string;
   CF_ACCOUNT_ID?: string;
   CF_ZONE_ID?: string;

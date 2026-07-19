@@ -19,9 +19,11 @@ import dashboardRoutes from "./routes/dashboard";
 import usersRoutes from "./routes/users";
 import installRoutes from "./routes/install";
 import settingsRoutes from "./routes/settings";
+import realtimeRoutes from "./routes/realtime";
 
 import { pruneRetention, sweepOffline } from "./lib/scheduled";
 import { DeviceConnection } from "./do/deviceConnection";
+import { PresenceHub } from "./do/presenceHub";
 
 const app = new Hono<{ Bindings: Env; Variables: Variables }>();
 
@@ -52,6 +54,9 @@ app.route("/api/events", eventsRoutes);
 app.route("/api/dashboard", dashboardRoutes);
 app.route("/api/users", usersRoutes);
 app.route("/api/settings", settingsRoutes);
+// Live WebSocket streams (auth via ?token= — a browser can't set a header on a
+// WebSocket), so mounted outside the Bearer-header admin routers above.
+app.route("/api/realtime", realtimeRoutes);
 
 app.notFound((c) => c.json({ error: "not_found" }, 404));
 
@@ -67,4 +72,4 @@ export default {
   },
 };
 
-export { DeviceConnection };
+export { DeviceConnection, PresenceHub };

@@ -202,20 +202,46 @@ app.get("/update", async (c) => {
   const uuid = c.get("deviceUuid");
   const channel = c.req.query("channel") || "stable";
   const current = c.req.query("current") || "";
-
-  const pkg = await c.env.DB.prepare(
-    "SELECT id, version, r2_key, checksum FROM ota_packages WHERE channel = ? ORDER BY created_at DESC LIMIT 1",
-  )
-    .bind(channel)
-    .first<{ id: number; version: string; checksum: string }>();
+  // amd64 | arm64. Empty from pre-arch agents; handled by the fallback below.
+  const arch = c.req.query("arch") || "";
 
   const none: OtaUpdateResponse = { update_available: false };
-  if (!pkg || pkg.version === current) return c.json(none);
 
-  const deployment = await c.env.DB.prepare(
-    "SELECT strategy, target, percent FROM ota_deployments WHERE package_id = ? AND status = 'active' ORDER BY created_at DESC LIMIT 1",
+  // Target version = newest upload in this channel, independent of arch, so a
+  // release rolls out uniformly and each device just picks its own binary.
+  const latest = await c.env.DB.prepare(
+    "SELECT version FROM ota_packages WHERE channel = ? ORDER BY created_at DESC LIMIT 1",
   )
-    .bind(pkg.id)
+    .bind(channel)
+    .first<{ version: string }>();
+  if (!latest || latest.version === current) return c.json(none);
+
+  // Resolve the binary for this device's architecture. Pre-arch agents send no
+  // arch; fall back to the newest package of the target version so they can
+  // still pull the update that makes them arch-aware.
+  const pkg = arch
+    ? await c.env.DB.prepare(
+        "SELECT id, version, checksum FROM ota_packages WHERE channel = ? AND version = ? AND arch = ? ORDER BY created_at DESC LIMIT 1",
+      )
+        .bind(channel, latest.version, arch)
+        .first<{ id: number; version: string; checksum: string }>()
+    : await c.env.DB.prepare(
+        "SELECT id, version, checksum FROM ota_packages WHERE channel = ? AND version = ? ORDER BY created_at DESC LIMIT 1",
+      )
+        .bind(channel, latest.version)
+        .first<{ id: number; version: string; checksum: string }>();
+  if (!pkg) return c.json(none); // no build for this arch yet
+
+  // A deployment gates the rollout. It references one arch's package but governs
+  // the whole version, so match any active deployment on a package of the same
+  // channel+version.
+  const deployment = await c.env.DB.prepare(
+    `SELECT d.strategy, d.target, d.percent FROM ota_deployments d
+     JOIN ota_packages p ON p.id = d.package_id
+     WHERE p.channel = ? AND p.version = ? AND d.status = 'active'
+     ORDER BY d.created_at DESC LIMIT 1`,
+  )
+    .bind(channel, latest.version)
     .first<{ strategy: string; target: string | null; percent: number }>();
   if (!deployment) return c.json(none);
 

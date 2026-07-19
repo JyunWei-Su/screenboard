@@ -1,5 +1,5 @@
 import { useRef, useState, type Dispatch, type SetStateAction } from "react";
-import { api } from "../api";
+import { api, contentUrl } from "../api";
 import { useFetch } from "../hooks";
 import { useAuth } from "../auth";
 import { EmptyRow, PageHeader, TableCard } from "../components/ui";
@@ -9,6 +9,7 @@ interface Pkg {
   id: number;
   channel: string;
   version: string;
+  arch: string | null;
   checksum: string;
   notes: string | null;
   created_at: string;
@@ -18,6 +19,7 @@ interface Deployment {
   package_id: number;
   version: string;
   channel: string;
+  arch: string | null;
   strategy: string;
   target: string | null;
   percent: number;
@@ -36,6 +38,7 @@ export default function Ota() {
   const [channel, setChannel] = useState("stable");
   const [version, setVersion] = useState("");
   const [busy, setBusy] = useState(false);
+  const [downloadingId, setDownloadingId] = useState<number | null>(null);
 
   const [pkgId, setPkgId] = useState("");
   const [strategy, setStrategy] = useState<"all" | "group" | "canary">("all");
@@ -44,16 +47,20 @@ export default function Ota() {
   const [selectedPackageIds, setSelectedPackageIds] = useState<Set<number>>(new Set());
   const [selectedDeploymentIds, setSelectedDeploymentIds] = useState<Set<number>>(new Set());
 
+  // Build filenames are screenboard-agent-linux-<arch>-v<version> (see
+  // agent/build.sh); the version reads straight off the name. The architecture
+  // is detected server-side from the binary's ELF header, so it doesn't depend
+  // on the filename at all.
   function detectedVersion(filename: string): string | null {
     const match = /^screenboard-agent-linux-(?:amd64|arm64)-v(\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?)$/.exec(filename);
-    return match?.[1] ?? null;
+    return match ? match[1] : null;
   }
 
   async function uploadPkg(file: File) {
-    const parsedVersion = detectedVersion(file.name);
-    const packageVersion = parsedVersion ?? version.trim();
+    const parsed = detectedVersion(file.name);
+    const packageVersion = parsed ?? version.trim();
     if (!packageVersion) return alert("請使用含版本號的建置檔,或先設定版本。");
-    if (parsedVersion) setVersion(parsedVersion);
+    if (parsed) setVersion(parsed);
     setBusy(true);
     try {
       const buf = await file.arrayBuffer();
@@ -61,9 +68,35 @@ export default function Ota() {
       await api.uploadWithType(`/api/ota/packages?${q}`, "application/octet-stream", buf);
       setVersion("");
       reloadPkgs();
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      alert(msg === "unrecognized_arch" ? "無法辨識架構:請上傳有效的 agent ELF 二進位檔。" : `上傳失敗:${msg}`);
     } finally {
       setBusy(false);
       if (fileRef.current) fileRef.current.value = "";
+    }
+  }
+
+  async function downloadPackage(p: Pkg) {
+    setDownloadingId(p.id);
+    try {
+      const res = await fetch(contentUrl(`/api/content/ota/${p.id}`));
+      if (!res.ok) throw new Error(`下載失敗 (${res.status})`);
+      const blob = await res.blob();
+      // Reconstruct the canonical build filename; the blob: URL is same-origin so
+      // the download attribute's name is always honored, even cross-origin API.
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `screenboard-agent-linux-${p.arch ?? "unknown"}-v${p.version}`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      alert(e instanceof Error ? e.message : "下載失敗");
+    } finally {
+      setDownloadingId(null);
     }
   }
   async function createDeployment() {
@@ -127,7 +160,7 @@ export default function Ota() {
 
       <div className="card space-y-4">
         <h2 className="card-title">上傳 agent 套件</h2>
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
           <div>
             <label className="label">通道</label>
             <select className="select" value={channel} onChange={(e) => setChannel(e.target.value)}>
@@ -145,6 +178,7 @@ export default function Ota() {
             />
           </div>
         </div>
+        <p className="text-xs text-slate-500 dark:text-dark-muted">架構會從二進位檔自動偵測(amd64 / arm64),無需手動選擇。</p>
         <label className="btn-primary inline-flex cursor-pointer">
           {busy ? "上傳中…" : "選擇二進位檔並上傳"}
           <input
@@ -171,6 +205,7 @@ export default function Ota() {
                 <th className="th w-10" />
                 <th className="th">版本</th>
                 <th className="th">通道</th>
+                <th className="th">架構</th>
                 <th className="th">校驗碼</th>
                 <th className="th">建立時間</th>
                 <th className="th" />
@@ -182,11 +217,19 @@ export default function Ota() {
                   <td className="td"><input type="checkbox" checked={selectedPackageIds.has(p.id)} onChange={() => toggleSelection(setSelectedPackageIds, p.id)} aria-label={`選取 ${p.version}`} /></td>
                   <td className="td font-medium">{p.version}</td>
                   <td className="td">{p.channel}</td>
+                  <td className="td font-mono text-xs">{p.arch ?? "未知"}</td>
                   <td className="td font-mono text-xs">{p.checksum.slice(0, 12)}…</td>
                   <td className="td whitespace-nowrap text-xs text-slate-500">{p.created_at}</td>
-                  <td className="td text-right">
+                  <td className="td whitespace-nowrap text-right">
                     <button
-                      className="text-xs font-medium text-red-600 hover:underline"
+                      className="text-xs font-medium text-brand-600 hover:underline disabled:opacity-50"
+                      disabled={downloadingId === p.id}
+                      onClick={() => void downloadPackage(p)}
+                    >
+                      {downloadingId === p.id ? "下載中…" : "下載"}
+                    </button>
+                    <button
+                      className="ml-3 text-xs font-medium text-red-600 hover:underline"
                       onClick={() => void deletePackage(p.id)}
                     >
                       刪除
@@ -194,7 +237,7 @@ export default function Ota() {
                   </td>
                 </tr>
               ))}
-              {pkgs && pkgs.length === 0 && <EmptyRow colSpan={6}>尚未上傳套件。</EmptyRow>}
+              {pkgs && pkgs.length === 0 && <EmptyRow colSpan={7}>尚未上傳套件。</EmptyRow>}
             </tbody>
           </table>
         </TableCard>
@@ -209,7 +252,7 @@ export default function Ota() {
               <option value="">— 選擇 —</option>
               {(pkgs ?? []).map((p) => (
                 <option key={p.id} value={p.id}>
-                  {p.version} ({p.channel})
+                  {p.version} ({p.channel} · {p.arch ?? "未知"})
                 </option>
               ))}
             </select>
@@ -274,6 +317,7 @@ export default function Ota() {
               <tr>
                 <th className="th w-10" />
                 <th className="th">版本</th>
+                <th className="th">架構</th>
                 <th className="th">策略</th>
                 <th className="th">範圍</th>
                 <th className="th">狀態</th>
@@ -285,6 +329,7 @@ export default function Ota() {
                 <tr key={d.id}>
                   <td className="td"><input type="checkbox" checked={selectedDeploymentIds.has(d.id)} onChange={() => toggleSelection(setSelectedDeploymentIds, d.id)} aria-label={`選取 ${d.version}`} /></td>
                   <td className="td font-medium">{d.version}</td>
+                  <td className="td font-mono text-xs">{d.arch ?? "未知"}</td>
                   <td className="td">{label(otaStrategyLabels, d.strategy)}</td>
                   <td className="td">{d.strategy === "canary" ? `${d.percent}%` : d.target ?? "全部"}</td>
                   <td className="td">
@@ -325,7 +370,7 @@ export default function Ota() {
                   </td>
                 </tr>
               ))}
-              {deps && deps.length === 0 && <EmptyRow colSpan={6}>尚無推送。</EmptyRow>}
+              {deps && deps.length === 0 && <EmptyRow colSpan={7}>尚無推送。</EmptyRow>}
             </tbody>
           </table>
         </TableCard>

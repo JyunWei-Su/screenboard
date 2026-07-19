@@ -8,6 +8,22 @@ async function sha256HexBytes(bytes: Uint8Array): Promise<string> {
   return [...new Uint8Array(d)].map((b) => b.toString(16).padStart(2, "0")).join("");
 }
 
+// Read the CPU architecture straight from the uploaded ELF header so the arch is
+// recorded correctly no matter how the file was named. e_machine is a 2-byte
+// field at offset 18 whose endianness follows EI_DATA (byte 5): EM_X86_64 = 0x3E
+// (amd64), EM_AARCH64 = 0xB7 (arm64). Returns null for anything that isn't a
+// recognizable Linux agent binary.
+function detectElfArch(bytes: Uint8Array): string | null {
+  if (bytes.length < 20) return null;
+  // ELF magic: 0x7F 'E' 'L' 'F'
+  if (bytes[0] !== 0x7f || bytes[1] !== 0x45 || bytes[2] !== 0x4c || bytes[3] !== 0x46) return null;
+  const little = bytes[5] === 1;
+  const machine = little ? bytes[18] | (bytes[19] << 8) : (bytes[18] << 8) | bytes[19];
+  if (machine === 0x3e) return "amd64";
+  if (machine === 0xb7) return "arm64";
+  return null;
+}
+
 function batchIds(value: unknown): number[] | null {
   if (!Array.isArray(value) || value.length === 0 || value.length > 100) return null;
   const ids = [...new Set(value)];
@@ -20,14 +36,20 @@ function batchIds(value: unknown): number[] | null {
 export const adminOta = new Hono<{ Bindings: Env; Variables: Variables }>();
 adminOta.use("*", requireAuth);
 
+// Architectures the agent build targets (see agent/build.sh).
+const OTA_ARCHS = ["amd64", "arm64"];
+
 adminOta.get("/packages", async (c) => {
   const rows = await c.env.DB.prepare(
-    "SELECT id, channel, version, checksum, notes, created_at FROM ota_packages ORDER BY created_at DESC",
+    "SELECT id, channel, version, arch, checksum, notes, created_at FROM ota_packages ORDER BY created_at DESC",
   ).all();
   return c.json(rows.results);
 });
 
 // Upload an agent binary. ?channel=stable|beta&version=x.y.z&notes=
+// The architecture is auto-detected from the uploaded ELF header (?arch= is
+// honored only as a fallback when the bytes aren't a recognizable ELF). arch is
+// part of the R2 key so the two arches of one version don't overwrite each other.
 adminOta.put("/packages", requireRole("admin"), async (c) => {
   const channel = c.req.query("channel") || "stable";
   const version = c.req.query("version");
@@ -35,15 +57,18 @@ adminOta.put("/packages", requireRole("admin"), async (c) => {
   if (!version) return c.json({ error: "missing_version" }, 400);
   const bytes = new Uint8Array(await c.req.arrayBuffer());
   if (bytes.byteLength === 0) return c.json({ error: "empty_body" }, 400);
+  const archParam = c.req.query("arch");
+  const arch = detectElfArch(bytes) ?? (archParam && OTA_ARCHS.includes(archParam) ? archParam : null);
+  if (!arch) return c.json({ error: "unrecognized_arch" }, 400);
   const checksum = await sha256HexBytes(bytes);
-  const key = `ota/${channel}/${version}/screenboard-agent`;
+  const key = `ota/${channel}/${arch}/${version}/screenboard-agent`;
   await c.env.BUCKET.put(key, bytes, {
     httpMetadata: { contentType: "application/octet-stream" },
   });
   const res = await c.env.DB.prepare(
-    "INSERT INTO ota_packages (channel, version, r2_key, checksum, notes) VALUES (?, ?, ?, ?, ?)",
+    "INSERT INTO ota_packages (channel, version, arch, r2_key, checksum, notes) VALUES (?, ?, ?, ?, ?, ?)",
   )
-    .bind(channel, version, key, checksum, notes)
+    .bind(channel, version, arch, key, checksum, notes)
     .run();
   return c.json({ id: res.meta.last_row_id, checksum });
 });
@@ -77,7 +102,7 @@ adminOta.delete("/packages/:id", requireRole("admin"), async (c) => {
 
 adminOta.get("/deployments", async (c) => {
   const rows = await c.env.DB.prepare(
-    `SELECT d.*, p.version, p.channel FROM ota_deployments d
+    `SELECT d.*, p.version, p.channel, p.arch FROM ota_deployments d
      JOIN ota_packages p ON p.id = d.package_id ORDER BY d.created_at DESC`,
   ).all();
   return c.json(rows.results);

@@ -28,7 +28,7 @@ type Agent struct {
 func NewAgent(cfg *Config) *Agent {
 	client := NewClient(cfg)
 	a := &Agent{cfg: cfg, client: client, player: NewPlayer(cfg, client)}
-	a.ws = NewWSClient(cfg, client, a.handleCommand)
+	a.ws = NewWSClient(cfg, client, a.handleCommand, a.player.SetChannelOnline)
 	return a
 }
 
@@ -78,8 +78,15 @@ func (a *Agent) startManagedLoops() {
 	a.loops.replace("health", 0, time.Duration(a.cfg.HealthInterval)*time.Second, a.reportHealth)
 	a.loops.replace("target-sync", 0, time.Duration(a.cfg.PlaylistPoll)*time.Second, a.syncTarget)
 	a.loops.replace("screenshot", 0, time.Duration(a.cfg.ScreenshotEvery)*time.Second, a.autoScreenshot)
+	// Poll the physical link often: a pulled cable should flip the offline badge
+	// in seconds, well before the command channel's heartbeat would notice.
+	a.loops.replace("link-monitor", 0, 2*time.Second, a.checkLink)
 	// Network/DNS may still be coming online just after boot.
 	a.loops.replace("ota", 90*time.Second, time.Duration(a.cfg.OTAEvery)*time.Second, a.autoUpdate)
+}
+
+func (a *Agent) checkLink() {
+	a.player.SetLinkUp(physicalLinkUp())
 }
 
 func (a *Agent) reportDeviceInfo() {

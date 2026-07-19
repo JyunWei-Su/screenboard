@@ -14,6 +14,7 @@
     // Non-secret config. Secrets (JWT_SECRET, DEVICE_JWT_SECRET, etc.) via `wrangler secret put`.
     "HEALTH_RETENTION_DAYS": "90",
     "OFFLINE_TIMEOUT_SECONDS": "90",
+    "OFFLINE_DISCONNECT_GRACE_SECONDS": "20",
     "PUBLIC_API_URL": "https://screenboard-api.example.workers.dev"
   },
   "d1_databases": [
@@ -35,6 +36,10 @@
       {
         "name": "DEVICE_CONN",
         "class_name": "DeviceConnection"
+      },
+      {
+        "name": "PRESENCE_HUB",
+        "class_name": "PresenceHub"
       }
     ]
   },
@@ -42,6 +47,10 @@
     {
       "tag": "v1",
       "new_sqlite_classes": ["DeviceConnection"]
+    },
+    {
+      "tag": "v2",
+      "new_sqlite_classes": ["PresenceHub"]
     }
   ],
   "triggers": {

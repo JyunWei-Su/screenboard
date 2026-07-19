@@ -12,6 +12,7 @@ coverage/
 
 # Go agent
 agent/screenboard-agent
+agent/agent
 agent/*.exe
 /agent/dist/
 

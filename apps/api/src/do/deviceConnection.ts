@@ -1,5 +1,6 @@
 import type { Env } from "../types";
 import { recordEvent } from "../lib/notify";
+import { broadcastDeviceStatus } from "../lib/presence";
 import type { AgentMessage } from "@screenboard/shared";
 
 // One Durable Object instance per device (addressed by device UUID).
@@ -15,6 +16,15 @@ export class DeviceConnection {
 
   private get offlineTimeoutMs(): number {
     return (parseInt(this.env.OFFLINE_TIMEOUT_SECONDS || "90", 10) || 90) * 1000;
+  }
+
+  // Grace after a socket drops before the device is flipped offline. Much
+  // shorter than the heartbeat watchdog, so a clean disconnect (network loss,
+  // agent stop) surfaces in the console within seconds instead of ~90s, while
+  // still absorbing a quick reconnect (token-refresh reconnect, brief network
+  // blip, an agent restart for an update) without flapping.
+  private get disconnectGraceMs(): number {
+    return (parseInt(this.env.OFFLINE_DISCONNECT_GRACE_SECONDS || "20", 10) || 20) * 1000;
   }
 
   async fetch(req: Request): Promise<Response> {
@@ -143,29 +153,56 @@ export class DeviceConnection {
     } catch {
       /* already closed */
     }
-    // Presence flips to offline via the alarm timeout (or the cron sweep).
+    // A dropped socket starts the short offline grace so the console sees the
+    // change within seconds. The alarm re-checks the live socket set, so arming
+    // it while another socket still remains is harmless — it clears itself.
+    await this.scheduleDisconnectSweep();
   }
 
   async webSocketError(): Promise<void> {
-    // no-op; alarm handles offline transition
+    await this.scheduleDisconnectSweep();
   }
 
   async alarm(): Promise<void> {
-    const last = (await this.state.storage.get<number>("lastSeen")) ?? 0;
     const uuid = await this.state.storage.get<string>("uuid");
-    const stale = Date.now() - last > this.offlineTimeoutMs;
-    const hasSockets = this.state.getWebSockets().length > 0;
-    if (uuid && stale && !hasSockets) {
-      await this.markOffline(uuid);
-    } else if (hasSockets) {
-      // still connected: re-arm the watchdog
-      await this.state.storage.setAlarm(Date.now() + this.offlineTimeoutMs);
+    if (!uuid) return;
+    const now = Date.now();
+    const last = (await this.state.storage.get<number>("lastSeen")) ?? 0;
+    const disconnectedAt = (await this.state.storage.get<number>("disconnectedAt")) ?? 0;
+    // Heartbeat has gone silent past the watchdog window. A device sends at least
+    // every 60s (the settings cap), so this only trips on a genuinely dead link.
+    // Crucially it does NOT require the socket to be gone: a pulled cable leaves
+    // the socket looking attached (no close event ever arrives), so gating on
+    // socket presence would let it hang online until the cron backstop. Trusting
+    // heartbeat staleness is what makes a silent drop visible in ~90s.
+    const stale = now - last > this.offlineTimeoutMs;
+    // A cleanly closed socket whose short grace has elapsed (fast path).
+    const graceElapsed = disconnectedAt > 0 && now - disconnectedAt >= this.disconnectGraceMs;
+    if (stale || graceElapsed) {
+      await this.markOffline(uuid); // broadcasts the transition to consoles
+      await this.state.storage.delete("disconnectedAt");
+      return;
     }
+    // Not offline yet: re-check at whichever deadline comes first — a pending
+    // disconnect grace, or the next heartbeat-staleness cutoff.
+    const nextGrace = disconnectedAt > 0 ? disconnectedAt + this.disconnectGraceMs : Number.POSITIVE_INFINITY;
+    const nextStale = last + this.offlineTimeoutMs + 1000;
+    await this.state.storage.setAlarm(Math.min(nextGrace, nextStale));
   }
 
   // ---- helpers ----
 
+  // A socket dropped: record when, and arm the short grace alarm. The alarm
+  // re-checks the live socket set, so this is safe even if another socket
+  // remains or the device reconnects before the grace elapses.
+  private async scheduleDisconnectSweep(): Promise<void> {
+    await this.state.storage.put("disconnectedAt", Date.now());
+    await this.state.storage.setAlarm(Date.now() + this.disconnectGraceMs);
+  }
+
   private async touch(): Promise<void> {
+    // Hearing from the device cancels any pending disconnect grace.
+    await this.state.storage.delete("disconnectedAt");
     await this.state.storage.put("lastSeen", Date.now());
     await this.state.storage.setAlarm(Date.now() + this.offlineTimeoutMs + 5000);
     const uuid = await this.state.storage.get<string>("uuid");
@@ -179,6 +216,7 @@ export class DeviceConnection {
   }
 
   private async markOnline(uuid: string): Promise<void> {
+    await this.state.storage.delete("disconnectedAt");
     const row = await this.env.DB.prepare(
       "SELECT status FROM devices WHERE uuid = ?",
     )
@@ -197,6 +235,9 @@ export class DeviceConnection {
         message: "Device came online",
       });
     }
+    // Push to consoles on every connect (not only offline→online) so a reconnect
+    // that never flipped the DB still refreshes a stale badge.
+    await this.broadcastStatus(uuid, "online");
   }
 
   private async markOffline(uuid: string): Promise<void> {
@@ -205,7 +246,9 @@ export class DeviceConnection {
     )
       .bind(uuid)
       .first<{ status: string }>();
-    if (row && row.status === "online") {
+    // 'warning' is an online-with-alerts state; treat it like online here so the
+    // fast path flips it too (the cron sweep already did).
+    if (row && (row.status === "online" || row.status === "warning")) {
       await this.env.DB.prepare(
         "UPDATE devices SET status = 'offline' WHERE uuid = ?",
       )
@@ -217,7 +260,12 @@ export class DeviceConnection {
         severity: "critical",
         message: "Device went offline",
       });
+      await this.broadcastStatus(uuid, "offline");
     }
+  }
+
+  private async broadcastStatus(uuid: string, status: string): Promise<void> {
+    await broadcastDeviceStatus(this.env, uuid, status);
   }
 
   private async flushQueued(uuid: string): Promise<void> {

@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import type { Env, Variables } from "../types";
 import {
   generateRefreshToken,
+  normalizeEnrollmentCode,
   sha256Hex,
   signDeviceToken,
 } from "../auth";
@@ -10,23 +11,53 @@ import { provisionRemoteAccess } from "../lib/cloudflareTunnel";
 
 const app = new Hono<{ Bindings: Env; Variables: Variables }>();
 
-// First-boot auto registration. Consumes a one-time enrollment token, creates the
+// Basic per-IP rate limit for the public enrollment endpoint. Best-effort and
+// per-isolate (no shared state), which is enough to blunt brute-force bursts
+// against the short enrollment codes without blocking a normal site rollout.
+const ENROLL_WINDOW_MS = 60_000;
+const ENROLL_MAX_PER_WINDOW = 30;
+const enrollHits = new Map<string, number[]>();
+
+function enrollRateLimited(ip: string): boolean {
+  const now = Date.now();
+  const recent = (enrollHits.get(ip) ?? []).filter((t) => now - t < ENROLL_WINDOW_MS);
+  recent.push(now);
+  enrollHits.set(ip, recent);
+  // Opportunistic cleanup so an attacker rotating IPs cannot grow the map without bound.
+  if (enrollHits.size > 5000) {
+    for (const [key, times] of enrollHits) {
+      if (times.every((t) => now - t >= ENROLL_WINDOW_MS)) enrollHits.delete(key);
+    }
+  }
+  return recent.length > ENROLL_MAX_PER_WINDOW;
+}
+
+// First-boot auto registration. Consumes a one-time enrollment code, creates the
 // device, and returns access + refresh tokens plus the WebSocket command URL.
 app.post("/enroll", async (c) => {
+  const ip = c.req.header("cf-connecting-ip") || c.req.header("x-forwarded-for") || "unknown";
+  if (enrollRateLimited(ip)) return c.json({ error: "rate_limited" }, 429);
+
   const body = await c.req.json<EnrollRequest>();
   if (!body.enrollment_token || !body.info) {
     return c.json({ error: "missing_fields" }, 400);
   }
 
+  const code = normalizeEnrollmentCode(body.enrollment_token);
   const tok = await c.env.DB.prepare(
     "SELECT token, group_id, expires_at, used_by_uuid FROM enrollment_tokens WHERE token = ?",
   )
-    .bind(body.enrollment_token)
+    .bind(code)
     .first<{ token: string; group_id: number | null; expires_at: string; used_by_uuid: string | null }>();
 
   if (!tok) return c.json({ error: "invalid_token" }, 401);
   if (tok.used_by_uuid) return c.json({ error: "token_used" }, 409);
-  if (new Date(tok.expires_at).getTime() < Date.now()) {
+  // SQLite datetime('now', …) is UTC formatted as "YYYY-MM-DD HH:MM:SS" (no
+  // zone). Parsing that non-ISO form with new Date() treats it as LOCAL time, so
+  // on a non-UTC runtime every short-lived code reads as already expired. Force
+  // a UTC interpretation before comparing.
+  const expiresAtMs = new Date(`${tok.expires_at.replace(" ", "T")}Z`).getTime();
+  if (!Number.isFinite(expiresAtMs) || expiresAtMs < Date.now()) {
     return c.json({ error: "token_expired" }, 410);
   }
 
@@ -60,15 +91,23 @@ app.post("/enroll", async (c) => {
     )
     .run();
 
-  // Provisioning is intentionally best-effort: a signage device must still be
-  // usable when Cloudflare Zero Trust has not yet been configured.
-  await provisionRemoteAccess(c.env, { uuid });
-
+  // Consume the code immediately after the device row exists, before anything
+  // that can fail. This guarantees a later error can never leave the code
+  // spendable while a half-registered device already occupies the fleet.
   await c.env.DB.prepare(
     "UPDATE enrollment_tokens SET used_by_uuid = ? WHERE token = ?",
   )
     .bind(uuid, tok.token)
     .run();
+
+  // Remote-access provisioning is best-effort: a signage device must still come
+  // up as a player when Cloudflare Zero Trust is unconfigured or the API errors,
+  // so never let a provisioning failure fail enrollment.
+  try {
+    await provisionRemoteAccess(c.env, { uuid });
+  } catch (error) {
+    console.error(JSON.stringify({ event: "enroll_provision_failed", device_id: uuid, error: String(error) }));
+  }
 
   const access = await signDeviceToken(c.env, uuid);
   const wsUrl = c.env.PUBLIC_API_URL.replace(/^http/, "ws").replace(/\/$/, "") +

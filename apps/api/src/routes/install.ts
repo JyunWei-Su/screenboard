@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import type { Env, Variables } from "../types";
 import installScript from "../install.sh";
+import uninstallScript from "../uninstall.sh";
 
 // Public bootstrap: `curl -fsSL <api>/install.sh | sudo bash -s -- <token>`.
 const app = new Hono<{ Bindings: Env; Variables: Variables }>();
@@ -13,6 +14,14 @@ app.get("/install.sh", (c) => {
   // as the installer's fallback check when a script is run from a local file.
   const script = installScript.replace(/^SERVER="__SERVER__"/m, `SERVER="${base}"`);
   return new Response(script, {
+    headers: { "Content-Type": "text/x-shellscript; charset=utf-8" },
+  });
+});
+
+// Public teardown: `curl -fsSL <api>/uninstall.sh | sudo bash`. Self-contained
+// (removes local ScreenBoard state only), so it needs no server injection.
+app.get("/uninstall.sh", () => {
+  return new Response(uninstallScript, {
     headers: { "Content-Type": "text/x-shellscript; charset=utf-8" },
   });
 });

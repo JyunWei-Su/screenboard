@@ -4,7 +4,7 @@
 # Installs X11 + Chromium + the agent + SSH + Cloudflare Tunnel, sets up
 # autologin kiosk, and reboots.
 #
-#   curl -fsSL https://YOUR-API/install.sh | sudo bash -s -- <ENROLLMENT_TOKEN>
+#   curl -fsSL https://YOUR-API/install.sh | sudo bash -s -- <ENROLLMENT_CODE>
 #
 # Optional flags: --user <name> (default kiosk) --channel <stable|beta> --server <url>
 set -euo pipefail
@@ -20,8 +20,7 @@ while [ $# -gt 0 ]; do
     --token)   TOKEN="$2"; shift 2;;
     --user)    KIOSK_USER="$2"; shift 2;;
     --channel) CHANNEL="$2"; shift 2;;
-    # The enrollment token is positional and base64url, so it may begin with '-'.
-    # Accept the first such argument as the token instead of rejecting it.
+    # The enrollment code is positional; accept the first non-flag argument as it.
     *)  if [ -z "$TOKEN" ]; then TOKEN="$1"; shift; else echo "unexpected arg: $1" >&2; exit 1; fi;;
   esac
 done
@@ -29,9 +28,9 @@ done
 [ "$(id -u)" -eq 0 ] || { echo "Please run as root (sudo)." >&2; exit 1; }
 if [ "$SERVER" = "__SERVER__" ]; then SERVER="${SB_SERVER:-}"; fi
 [ -n "$SERVER" ] || { echo "Server URL required (--server <url>)." >&2; exit 1; }
-# Re-installs keep the enrolled config, so they do not require a new token.
+# Re-installs keep the enrolled config, so they do not require a new code.
 if [ -z "$TOKEN" ] && [ ! -f /etc/screenboard/agent.json ]; then
-  echo "Enrollment token required for a new device: ... | sudo bash -s -- <TOKEN>" >&2
+  echo "Enrollment code required for a new device: ... | sudo bash -s -- <CODE>" >&2
   exit 1
 fi
 SERVER="${SERVER%/}"
@@ -46,13 +45,88 @@ case "$CHANNEL" in
   *) echo "Unsupported channel: $CHANNEL (use stable or beta)" >&2; exit 1;;
 esac
 
-echo "==> [1/8] Installing packages"
+# The enrollment code is short-lived, so register the device up front — before
+# the slow package install — and let the remaining setup (which never needs the
+# code again) proceed afterwards. A bad or expired code then fails within
+# seconds, before any packages are installed.
+
+echo "==> [1/9] Creating kiosk user: $KIOSK_USER"
+id "$KIOSK_USER" >/dev/null 2>&1 || useradd -m -s /bin/bash "$KIOSK_USER"
+usermod -aG video,render,input,audio,tty "$KIOSK_USER" 2>/dev/null || true
+
+echo "==> [2/9] Downloading agent ($ARCH)"
+install -d /usr/local/bin
+# Download beside the target, then atomically replace it. This avoids curl(23)
+# when a previous kiosk session is still executing the old Agent binary.
+AGENT_TMP="$(mktemp /usr/local/bin/.screenboard-agent.XXXXXX)"
+trap 'rm -f "$AGENT_TMP"' EXIT
+curl -fsSL "$SERVER/install/agent?arch=$ARCH&channel=$CHANNEL" -o "$AGENT_TMP"
+chmod 755 "$AGENT_TMP"
+mv -f "$AGENT_TMP" /usr/local/bin/screenboard-agent
+trap - EXIT
+
+echo "==> [3/9] Writing config"
+# The kiosk Agent uses atomic writes (agent.json.tmp then rename), so it needs
+# write access to this directory as well as the config file. Keep it private to
+# root and the kiosk account; it contains device access/refresh credentials.
+install -d -o root -g "$KIOSK_USER" -m 770 /etc/screenboard
+install -d -o "$KIOSK_USER" -g "$KIOSK_USER" -m 755 /var/lib/screenboard/cache
+# chromium_bin is resolved from PATH at runtime; step [5/9] rewrites it only on
+# systems where the binary is chromium-browser instead of chromium.
+if grep -qs '"device_uuid"' /etc/screenboard/agent.json; then
+  # Already enrolled: keep the persisted credentials, ignore any code argument.
+  echo "    device already enrolled — keeping existing credentials"
+elif [ -n "$TOKEN" ]; then
+  # Fresh enrollment, or a retry with a new code: always (over)write the config
+  # so a stale token left by an earlier failed attempt is replaced by this code.
+  cat >/etc/screenboard/agent.json <<JSON
+{
+  "server_url": "$SERVER",
+  "enrollment_token": "$TOKEN",
+  "channel": "$CHANNEL",
+  "player_port": 8888,
+  "screenshot_interval_sec": 0,
+  "chromium_bin": "chromium",
+  "cache_dir": "/var/lib/screenboard/cache",
+  "display": { "kiosk": true, "zoom": 1.0, "rotate": 0, "screen": 0 }
+}
+JSON
+  chmod 600 /etc/screenboard/agent.json
+else
+  # Not enrolled and no code supplied, but a config exists — try it as-is.
+  echo "    reusing existing enrollment config"
+fi
+
+echo "==> [4/9] Enrolling device"
+# Run enrollment as root so the agent can persist credentials. The Agent gathers
+# device info without X11 tools (resolution is re-reported once the kiosk starts).
+# A re-install with an already-enrolled config is a no-op here.
+if ! /usr/local/bin/screenboard-agent --config /etc/screenboard/agent.json --enroll-only; then
+  # Enrollment failed. If no credentials were persisted, drop the config so it
+  # cannot leave a spent code behind — a retry with a fresh code then starts
+  # clean instead of re-sending this stale token.
+  if ! grep -qs '"device_uuid"' /etc/screenboard/agent.json; then
+    rm -f /etc/screenboard/agent.json
+    echo "    enrollment failed — cleared config; generate a new code and re-run" >&2
+  fi
+  exit 1
+fi
+# Hand the credential file to the kiosk account for runtime token refresh.
+chown "$KIOSK_USER:$KIOSK_USER" /etc/screenboard/agent.json
+chmod 600 /etc/screenboard/agent.json
+
+echo "==> [5/9] Installing packages"
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -y
 apt-get install -y --no-install-recommends \
   xserver-xorg xinit openbox chromium scrot x11-xserver-utils x11-utils xbindkeys \
   ca-certificates curl unclutter dbus-x11 fonts-liberation fonts-noto-cjk openssh-server sudo systemd-timesyncd
-CHROMIUM_BIN="$(command -v chromium || command -v chromium-browser || echo chromium)"
+
+# Point the Agent at chromium-browser on systems that lack a plain `chromium`.
+if ! command -v chromium >/dev/null 2>&1 && command -v chromium-browser >/dev/null 2>&1; then
+  CHROMIUM_BIN="$(command -v chromium-browser)"
+  sed -i "s#\"chromium_bin\"[[:space:]]*:[[:space:]]*\"[^\"]*\"#\"chromium_bin\": \"$CHROMIUM_BIN\"#" /etc/screenboard/agent.json
+fi
 
 # cloudflared is supplied by Cloudflare's signed package repository.
 install -d -m 755 /usr/share/keyrings
@@ -62,6 +136,7 @@ echo 'deb [signed-by=/usr/share/keyrings/cloudflare-main.gpg] https://pkg.cloudf
 apt-get update -y
 apt-get install -y cloudflared
 
+echo "==> [6/9] Configuring SSH and Cloudflare Tunnel"
 # SSH is reachable only through cloudflared. Keep a physical console available
 # for recovery; no password or root logins are exposed.
 install -d -m 755 /etc/ssh/sshd_config.d
@@ -74,49 +149,8 @@ SSH
 systemctl enable ssh
 systemctl restart ssh
 
-echo "==> [2/8] Creating kiosk user: $KIOSK_USER"
-id "$KIOSK_USER" >/dev/null 2>&1 || useradd -m -s /bin/bash "$KIOSK_USER"
-usermod -aG video,render,input,audio,tty "$KIOSK_USER" 2>/dev/null || true
-
-echo "==> [3/8] Downloading agent ($ARCH)"
-install -d /usr/local/bin
-# Download beside the target, then atomically replace it. This avoids curl(23)
-# when a previous kiosk session is still executing the old Agent binary.
-AGENT_TMP="$(mktemp /usr/local/bin/.screenboard-agent.XXXXXX)"
-trap 'rm -f "$AGENT_TMP"' EXIT
-curl -fsSL "$SERVER/install/agent?arch=$ARCH&channel=$CHANNEL" -o "$AGENT_TMP"
-chmod 755 "$AGENT_TMP"
-mv -f "$AGENT_TMP" /usr/local/bin/screenboard-agent
-trap - EXIT
-
-echo "==> [4/8] Writing config"
-# The kiosk Agent uses atomic writes (agent.json.tmp then rename), so it needs
-# write access to this directory as well as the config file. Keep it private to
-# root and the kiosk account; it contains device access/refresh credentials.
-install -d -o root -g "$KIOSK_USER" -m 770 /etc/screenboard
-install -d -o "$KIOSK_USER" -g "$KIOSK_USER" -m 755 /var/lib/screenboard/cache
-if [ ! -f /etc/screenboard/agent.json ]; then
-  cat >/etc/screenboard/agent.json <<JSON
-{
-  "server_url": "$SERVER",
-  "enrollment_token": "$TOKEN",
-  "channel": "$CHANNEL",
-  "player_port": 8888,
-  "screenshot_interval_sec": 0,
-  "chromium_bin": "$CHROMIUM_BIN",
-  "cache_dir": "/var/lib/screenboard/cache",
-  "display": { "kiosk": true, "zoom": 1.0, "rotate": 0, "screen": 0 }
-}
-JSON
-  chmod 600 /etc/screenboard/agent.json
-else
-  echo "    /etc/screenboard/agent.json exists — leaving as-is"
-fi
-
-echo "==> [5/8] Enrolling device and starting Cloudflare Tunnel"
-# Run enrollment once as root so the agent can persist credentials. The kiosk
-# process later runs unprivileged as $KIOSK_USER.
-/usr/local/bin/screenboard-agent --config /etc/screenboard/agent.json --enroll-only
+# Retrieve this device's Cloudflare Tunnel token over device-authenticated HTTPS
+# and start cloudflared. Best-effort: the device is a usable player without it.
 ACCESS_TOKEN="$(sed -n 's/.*\"access_token\"[[:space:]]*:[[:space:]]*\"\([^\"]*\)\".*/\1/p' /etc/screenboard/agent.json | head -n1)"
 if [ -n "$ACCESS_TOKEN" ]; then
   REMOTE_ACCESS="$(curl -fsSL -H "Authorization: Bearer $ACCESS_TOKEN" "$SERVER/api/agent/remote-access" || true)"
@@ -171,10 +205,8 @@ SSH
     esac
   fi
 fi
-chown "$KIOSK_USER:$KIOSK_USER" /etc/screenboard/agent.json
-chmod 600 /etc/screenboard/agent.json
 
-echo "==> [6/8] Console autologin on tty1"
+echo "==> [7/9] Console autologin on tty1"
 install -d /etc/systemd/system/getty@tty1.service.d
 cat >/etc/systemd/system/getty@tty1.service.d/autologin.conf <<CONF
 [Service]
@@ -182,7 +214,7 @@ ExecStart=
 ExecStart=-/sbin/agetty --autologin $KIOSK_USER --noclear %I \$TERM
 CONF
 
-echo "==> [7/8] Start X on login + kiosk restart loop"
+echo "==> [8/9] Start X on login + kiosk restart loop"
 HOME_DIR="$(getent passwd "$KIOSK_USER" | cut -d: -f6)"
 cat >/usr/local/bin/screenboard-debug <<'DEBUG'
 #!/bin/sh
@@ -337,7 +369,7 @@ chmod 755 /usr/local/bin/screenboard-set-hostname
 
 # Remote full-reinstall helper. Re-runs this installer as root (repairs binary,
 # helpers, sudoers, cloudflared, kiosk session) and reboots. The persisted
-# config means no enrollment token is needed.
+# config means no enrollment code is needed.
 cat >/usr/local/bin/screenboard-reinstall <<'REINSTALL'
 #!/bin/sh
 set -eu
@@ -365,7 +397,7 @@ visudo -cf /etc/sudoers.d/screenboard-agent
 sudo -u "$KIOSK_USER" sudo -n /usr/local/bin/screenboard-sync-time >/dev/null
 sudo -u "$KIOSK_USER" sudo -n /usr/local/bin/screenboard-set-hostname --check >/dev/null
 
-echo "==> [8/8] Enabling boot-to-console and rebooting"
+echo "==> [9/9] Enabling boot-to-console and rebooting"
 systemctl set-default multi-user.target
 systemctl daemon-reload
 echo

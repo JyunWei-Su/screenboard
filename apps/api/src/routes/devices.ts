@@ -152,10 +152,18 @@ app.patch("/:uuid", requireRole("admin", "operator"), async (c) => {
 
 app.delete("/:uuid", requireRole("admin"), async (c) => {
   const uuid = c.req.param("uuid");
+  const device = await c.env.DB.prepare("SELECT uuid FROM devices WHERE uuid = ?")
+    .bind(uuid).first();
+  if (!device) return c.json({ error: "not_found" }, 404);
   const remote = await c.env.DB.prepare(
     "SELECT tunnel_id, access_app_id, hostname FROM device_remote_access WHERE device_id = ?",
   ).bind(uuid).first<{ tunnel_id: string; access_app_id: string | null; hostname: string }>();
   if (remote) await removeRemoteAccess(c.env, remote);
+  // Schedules reference a device by uuid without a foreign key, so their rows
+  // must be cleared explicitly; the device's other rows (health, screenshots,
+  // commands, events, remote_access) drop via ON DELETE CASCADE.
+  await c.env.DB.prepare("DELETE FROM schedules WHERE target_type = 'device' AND target_id = ?")
+    .bind(uuid).run();
   await c.env.DB.prepare("DELETE FROM devices WHERE uuid = ?")
     .bind(uuid)
     .run();

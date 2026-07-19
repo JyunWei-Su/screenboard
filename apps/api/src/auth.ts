@@ -112,14 +112,26 @@ export function generateRefreshToken(): string {
   return [...buf].map((b) => b.toString(16).padStart(2, "0")).join("");
 }
 
-// A one-time, 24-hour enrollment token. 128 bits of randomness remains
-// impractical to guess while its base64url representation is only 22 chars.
-export function generateEnrollmentToken(): string {
-  const buf = new Uint8Array(16);
-  crypto.getRandomValues(buf);
-  let binary = "";
-  for (const byte of buf) binary += String.fromCharCode(byte);
-  return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+// A short, human-typeable one-time enrollment code: 4 uppercase letters
+// (I and O omitted so they can't be confused with 1 and 0) followed by 6
+// digits, e.g. "ABCD-123456". ~38 bits of entropy — safe as a one-time code
+// paired with a short TTL and the enroll rate limit, and easy to read aloud.
+const CODE_LETTERS = "ABCDEFGHJKLMNPQRSTUVWXYZ"; // A-Z without I, O (24 letters)
+
+export function generateEnrollmentCode(): string {
+  const rand = new Uint32Array(10);
+  crypto.getRandomValues(rand);
+  let code = "";
+  for (let i = 0; i < 4; i++) code += CODE_LETTERS[rand[i] % CODE_LETTERS.length];
+  for (let i = 4; i < 10; i++) code += String(rand[i] % 10);
+  return code; // canonical form, no separator
+}
+
+// Normalize an entered code before lookup: uppercase and strip anything that is
+// not a letter or digit, so "abcd-123456", "ABCD 123456" and "ABCD123456" all
+// resolve to the same stored code.
+export function normalizeEnrollmentCode(input: string): string {
+  return input.toUpperCase().replace(/[^A-Z0-9]/g, "");
 }
 
 export async function sha256Hex(input: string): Promise<string> {

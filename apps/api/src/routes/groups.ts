@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import type { Env, Variables } from "../types";
-import { generateEnrollmentToken, requireAuth, requireRole } from "../auth";
+import { generateEnrollmentCode, requireAuth, requireRole } from "../auth";
 
 const app = new Hono<{ Bindings: Env; Variables: Variables }>();
 app.use("*", requireAuth);
@@ -56,20 +56,32 @@ app.delete("/:id", requireRole("admin"), async (c) => {
   return c.json({ ok: true });
 });
 
-// Create a one-time enrollment token (optionally bound to a group).
+// Create a short, one-time enrollment code (optionally bound to a group). The
+// code is deliberately short-lived; if it expires before use, just issue a new
+// one. Default TTL is 10 minutes (max 1440).
 app.post("/enroll-token", requireRole("admin", "operator"), async (c) => {
-  const { group_id, ttl_hours } = await c.req.json<{
+  const { group_id, ttl_minutes } = await c.req.json<{
     group_id?: number | null;
-    ttl_hours?: number;
-  }>().catch(() => ({ group_id: null, ttl_hours: 24 }));
-  const token = generateEnrollmentToken();
-  const ttl = ttl_hours && ttl_hours > 0 ? ttl_hours : 24;
-  await c.env.DB.prepare(
-    "INSERT INTO enrollment_tokens (token, group_id, expires_at) VALUES (?, ?, datetime('now', ?))",
-  )
-    .bind(token, group_id ?? null, `+${ttl} hours`)
-    .run();
-  return c.json({ token, expires_in_hours: ttl });
+    ttl_minutes?: number;
+  }>().catch(() => ({ group_id: null, ttl_minutes: 10 }));
+  const ttl = ttl_minutes && ttl_minutes > 0 ? Math.min(Math.floor(ttl_minutes), 1440) : 10;
+  // The code is the PRIMARY KEY and short codes can (rarely) collide, so retry
+  // a few times on a uniqueness conflict before giving up.
+  for (let attempt = 0; attempt < 5; attempt++) {
+    const token = generateEnrollmentCode();
+    try {
+      await c.env.DB.prepare(
+        "INSERT INTO enrollment_tokens (token, group_id, expires_at) VALUES (?, ?, datetime('now', ?))",
+      )
+        .bind(token, group_id ?? null, `+${ttl} minutes`)
+        .run();
+      return c.json({ token, expires_in_minutes: ttl });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (!/unique|constraint/i.test(message)) throw error;
+    }
+  }
+  return c.json({ error: "could_not_allocate_code" }, 500);
 });
 
 export default app;

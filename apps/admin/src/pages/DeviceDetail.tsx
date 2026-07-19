@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
-import { useParams, Link } from "react-router-dom";
-import { api, contentUrl } from "../api";
+import { useParams, Link, useNavigate } from "react-router-dom";
+import { api, apiBase, contentUrl } from "../api";
 import { useFetch } from "../hooks";
 import { canWrite, useAuth } from "../auth";
 import { TableCard } from "../components/ui";
@@ -72,9 +72,12 @@ commandTypeLabels.repair_tunnel = "修復 SSH 連線";
 
 export default function DeviceDetail() {
   const { uuid } = useParams();
+  const navigate = useNavigate();
   const { user } = useAuth();
   const writable = canWrite(user);
+  const isAdmin = user?.role === "admin";
   const { showToast } = useToast();
+  const uninstallCommand = `curl -fsSL ${apiBase() || "https://YOUR-API"}/uninstall.sh | sudo bash`;
   const { data: d, reload } = useFetch<Device>(`/api/devices/${uuid}`);
   const { data: shots, reload: reloadShots } = useFetch<ScreenshotRow[]>(
     `/api/screenshots?device_id=${uuid}&limit=12`,
@@ -267,6 +270,31 @@ export default function DeviceDetail() {
     await api.del(`/api/devices/${uuid}/commands/batch`, { ids });
     setSelectedCommandIds(new Set());
     await reloadCmds();
+  }
+  async function copyUninstall() {
+    try {
+      await navigator.clipboard.writeText(uninstallCommand);
+      showToast("已複製解除安裝指令", "success");
+    } catch {
+      showToast("複製失敗，請手動選取指令。", "error");
+    }
+  }
+  async function removeDevice() {
+    if (!d) return;
+    if (!confirm(
+      `確定要移除裝置「${d.name}」嗎?\n\n` +
+      "這會刪除此裝置在主控台的所有紀錄(健康、截圖、指令、排程、SSH Tunnel),且無法復原。\n" +
+      "實體裝置仍會繼續播放 — 請先在裝置上執行解除安裝指令,或先送出「關機」。",
+    )) return;
+    setActionBusy(true);
+    try {
+      await api.del(`/api/devices/${uuid}`);
+      showToast("裝置已移除。", "success");
+      navigate("/devices");
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : "移除裝置失敗", "error");
+      setActionBusy(false);
+    }
   }
 
   return (
@@ -659,6 +687,29 @@ export default function DeviceDetail() {
           </div>
         )}
       </div>
+
+      {isAdmin && (
+        <div className="card border-red-200 dark:border-red-500/30">
+          <h2 className="mb-2 text-sm font-semibold text-red-700 dark:text-red-400">危險區</h2>
+          <p className="text-xs text-slate-500 dark:text-dark-subtle">
+            移除裝置只會刪除主控台的紀錄;實體機器仍會繼續播放。若要一併清除裝置端的 Agent、Kiosk 與 SSH 設定,請先在該裝置上以 root 執行:
+          </p>
+          <div className="mt-2 flex items-start gap-2">
+            <code className="block flex-1 break-all rounded-lg border border-slate-200 bg-slate-50 p-2.5 text-xs dark:border-dark-border dark:bg-dark-raised dark:text-dark-text">
+              {uninstallCommand}
+            </code>
+            <button type="button" className="btn-ghost btn-sm shrink-0" onClick={() => void copyUninstall()}>
+              複製
+            </button>
+          </div>
+          <div className="mt-3 border-t border-red-100 pt-3 dark:border-red-500/20">
+            <button className="btn-danger" disabled={actionBusy} onClick={() => void removeDevice()}>
+              移除裝置
+            </button>
+            <p className="mt-1 text-xs text-slate-400">刪除主控台的所有裝置紀錄,此操作無法復原。</p>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

@@ -46,20 +46,25 @@ function Usage({ value }: { value: number | null }) {
 
 export default function Devices() {
   const { user } = useAuth();
+  const isAdmin = user?.role === "admin";
   const { showToast } = useToast();
-  const { data, loading } = useFetch<DeviceRow[]>("/api/devices");
+  const { data, loading, reload } = useFetch<DeviceRow[]>("/api/devices");
   const [token, setToken] = useState<string | null>(null);
+  const [expiresMin, setExpiresMin] = useState(10);
 
+  // Codes are stored canonically (ABCD123456); show them hyphenated for reading.
+  const codeDisplay = token ? `${token.slice(0, 4)}-${token.slice(4)}` : "";
   const installCommand = token
-    ? `curl -fsSL ${apiBase() || "https://YOUR-API"}/install.sh | sudo bash -s -- ${token}`
+    ? `curl -fsSL ${apiBase() || "https://YOUR-API"}/install.sh | sudo bash -s -- ${codeDisplay}`
     : "";
 
   async function enroll() {
-    const res = await api.post<{ token: string; expires_in_hours: number }>(
+    const res = await api.post<{ token: string; expires_in_minutes: number }>(
       "/api/groups/enroll-token",
-      { ttl_hours: 24 },
+      { ttl_minutes: 10 },
     );
     setToken(res.token);
+    setExpiresMin(res.expires_in_minutes);
   }
 
   async function copyCommand() {
@@ -68,6 +73,17 @@ export default function Devices() {
       showToast("已複製安裝指令", "success");
     } catch {
       showToast("複製失敗，請手動選取指令。", "error");
+    }
+  }
+
+  async function remove(uuid: string, name: string) {
+    if (!confirm(`確定要移除裝置「${name}」嗎?此操作會刪除主控台的所有裝置紀錄,且無法復原。`)) return;
+    try {
+      await api.del(`/api/devices/${uuid}`);
+      showToast("裝置已移除。", "success");
+      reload();
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : "移除裝置失敗", "error");
     }
   }
 
@@ -84,7 +100,13 @@ export default function Devices() {
       {token && (
         <div className="card animate-slide-in border-brand-200 bg-brand-50 dark:border-brand-500/30 dark:bg-brand-500/10">
           <div className="text-sm font-medium text-brand-700 dark:text-brand-200">
-            一次性註冊權杖(24 小時內有效)— 在 Debian 裝置上執行以下安裝指令:
+            一次性註冊碼(請於 {expiresMin} 分鐘內於裝置完成註冊;逾時請重新產生):
+          </div>
+          <div className="mt-2 select-all text-center font-mono text-3xl font-bold tracking-[0.3em] text-brand-800 dark:text-brand-100">
+            {codeDisplay}
+          </div>
+          <div className="mt-3 text-sm font-medium text-brand-700 dark:text-brand-200">
+            在 Debian 裝置上執行以下安裝指令:
           </div>
           <div className="mt-2 flex items-start gap-2">
             <code className="block flex-1 break-all rounded-lg border border-brand-100 bg-white p-2.5 text-xs dark:border-dark-border dark:bg-dark-raised dark:text-dark-text">
@@ -93,9 +115,6 @@ export default function Devices() {
             <button type="button" className="btn-ghost btn-sm shrink-0" onClick={() => void copyCommand()}>
               複製
             </button>
-          </div>
-          <div className="mt-2 text-xs text-brand-700/70 dark:text-brand-200/70">
-            權杖：<span className="font-mono break-all">{token}</span>
           </div>
         </div>
       )}
@@ -112,6 +131,7 @@ export default function Devices() {
               <th className="th">記憶體</th>
               <th className="th">磁碟</th>
               <th className="th">最後上線</th>
+              {isAdmin && <th className="th" />}
             </tr>
           </thead>
           <tbody>
@@ -142,11 +162,21 @@ export default function Devices() {
                 <td className="td whitespace-nowrap text-xs text-slate-500">
                   {d.last_seen_at ?? "—"}
                 </td>
+                {isAdmin && (
+                  <td className="td text-right">
+                    <button
+                      className="text-xs font-medium text-red-600 hover:underline"
+                      onClick={() => void remove(d.uuid, d.name)}
+                    >
+                      移除
+                    </button>
+                  </td>
+                )}
               </tr>
             ))}
-            {loading && <EmptyRow colSpan={8}>載入中…</EmptyRow>}
+            {loading && <EmptyRow colSpan={isAdmin ? 9 : 8}>載入中…</EmptyRow>}
             {data && data.length === 0 && (
-              <EmptyRow colSpan={8}>
+              <EmptyRow colSpan={isAdmin ? 9 : 8}>
                 尚無裝置。請點「註冊裝置」取得安裝指令。
               </EmptyRow>
             )}

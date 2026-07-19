@@ -163,16 +163,21 @@ bash scripts/build-agent.sh 0.1.0 amd64
 # (the OTA page reads the version from the filename automatically)
 ```
 
-Create an enrollment token in the admin console (**Devices → + Enrollment token**), then
+Create an enrollment code in the admin console (**Devices → + 註冊裝置**), then
 on the device:
 
 ```bash
-curl -fsSL https://YOUR-API/install.sh | sudo bash -s -- <ENROLLMENT_TOKEN>
+curl -fsSL https://YOUR-API/install.sh | sudo bash -s -- <ENROLLMENT_CODE>
 ```
 
-New enrollment tokens are 22-character base64url values with 128 bits of randomness.
-The installer automatically uses the same API hostname it was downloaded from; no
-`--server` option is normally needed.
+Enrollment codes are short and human-typeable — 4 uppercase letters (I and O
+omitted) plus 6 digits, shown as `ABCD-123456`. They are one-time and expire
+after **10 minutes** by default; if a code expires before enrollment, just
+generate a new one. The installer registers the device up front, before the
+long package install, so the code is spent within seconds of being issued.
+Codes are matched case-insensitively and ignore separators, so `abcd 123456`
+also works. The installer automatically uses the same API hostname it was
+downloaded from; no `--server` option is normally needed.
 
 The script (served from `apps/api/src/install.sh`) installs X11 + Chromium + the agent,
 OpenSSH, and `cloudflared`,

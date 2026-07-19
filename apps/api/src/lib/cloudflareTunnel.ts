@@ -254,6 +254,12 @@ export async function removeRemoteAccess(
     for (const record of records) {
       await cf(env, `/zones/${env.CF_ZONE_ID}/dns_records/${record.id}`, { method: "DELETE" });
     }
+    // Removing the device means it has left the fleet, so tear the connector down
+    // with it. Cloudflare refuses to delete a Tunnel that still has connections,
+    // so drop them first; this severs the device's live cloudflared connector and
+    // lets the Tunnel delete cleanly instead of orphaning.
+    await cf(env, `/accounts/${env.CF_ACCOUNT_ID}/cfd_tunnel/${access.tunnel_id}/connections`, { method: "DELETE" })
+      .catch(() => {});
     await cf(env, `/accounts/${env.CF_ACCOUNT_ID}/cfd_tunnel/${access.tunnel_id}`, { method: "DELETE" });
   } catch (error) {
     // Device deletion must not be blocked by a stale or already-deleted CF resource.

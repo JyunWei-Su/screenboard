@@ -47,6 +47,8 @@ export interface DeviceInfo {
   ip: string;
   mac: string;
   resolution: string; // e.g. "1920x1080"
+  protocol_version?: number;
+  capabilities?: string[];
 }
 
 export interface Device extends DeviceInfo {
@@ -67,7 +69,9 @@ export interface DisplaySettings {
 
 export interface AgentSettings {
   health_interval_sec: number;
+  device_info_interval_sec: number; // includes display resolution
   playlist_poll_sec: number;
+  heartbeat_interval_sec: number; // 10-60 seconds, below the offline watchdog
   screenshot_interval_sec: number; // 0 disables scheduled screenshots
   ota_check_sec: number;
 }
@@ -80,6 +84,13 @@ export interface HealthSample {
   disk: number; // percent 0-100
   net_ok: boolean;
   uptime: number; // seconds
+  temperature?: number;
+  chromium_status?: string;
+  browser_restart_count?: number;
+  browser_last_exit_at?: string;
+  last_sync_success_at?: string;
+  cache_used_bytes?: number;
+  cache_limit_bytes?: number;
 }
 
 // ---- Enrollment ----

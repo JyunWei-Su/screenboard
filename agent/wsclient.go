@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"log"
 	"net/http"
@@ -19,21 +20,34 @@ type WSClient struct {
 	client  *Client
 	handler CommandHandler
 
-	mu   sync.Mutex
-	conn *websocket.Conn
+	mu              sync.Mutex
+	conn            *websocket.Conn
+	heartbeatUpdate chan time.Duration
 }
 
 func NewWSClient(cfg *Config, client *Client, handler CommandHandler) *WSClient {
-	return &WSClient{cfg: cfg, client: client, handler: handler}
+	return &WSClient{cfg: cfg, client: client, handler: handler, heartbeatUpdate: make(chan time.Duration, 1)}
 }
 
-// Run connects and blocks, reconnecting with backoff until the process exits.
-func (w *WSClient) Run() {
+// Run connects and blocks, reconnecting with backoff until ctx is cancelled.
+func (w *WSClient) Run(ctx context.Context) error {
 	backoff := time.Second
 	for {
-		if err := w.connectAndServe(); err != nil {
+		if ctx.Err() != nil {
+			return nil
+		}
+		if err := w.connectAndServe(ctx); err != nil {
+			if ctx.Err() != nil {
+				return nil
+			}
 			log.Printf("ws: %v (retry in %s)", err, backoff)
-			time.Sleep(backoff)
+			t := time.NewTimer(backoff)
+			select {
+			case <-ctx.Done():
+				t.Stop()
+				return nil
+			case <-t.C:
+			}
 			if backoff < 30*time.Second {
 				backoff *= 2
 			}
@@ -43,14 +57,18 @@ func (w *WSClient) Run() {
 	}
 }
 
-func (w *WSClient) connectAndServe() error {
-	url := w.cfg.WSURL + "?token=" + w.cfg.AccessToken
-	conn, resp, err := websocket.DefaultDialer.Dial(url, nil)
+func (w *WSClient) connectAndServe(ctx context.Context) error {
+	// Authenticate the upgrade with an Authorization header so the token stays
+	// out of the URL (and thus out of access logs). The server still accepts a
+	// ?token= query for older agents.
+	authHeader := func() http.Header {
+		return http.Header{"Authorization": {"Bearer " + w.cfg.AccessToken}}
+	}
+	conn, resp, err := websocket.DefaultDialer.DialContext(ctx, w.cfg.WSURL, authHeader())
 	if err != nil {
 		if resp != nil && resp.StatusCode == http.StatusUnauthorized {
 			if rErr := w.client.refresh(); rErr == nil {
-				url = w.cfg.WSURL + "?token=" + w.cfg.AccessToken
-				conn, _, err = websocket.DefaultDialer.Dial(url, nil)
+				conn, _, err = websocket.DefaultDialer.DialContext(ctx, w.cfg.WSURL, authHeader())
 			}
 		}
 		if err != nil {
@@ -61,10 +79,19 @@ func (w *WSClient) connectAndServe() error {
 	w.conn = conn
 	w.mu.Unlock()
 	log.Printf("ws connected")
+	serveDone := make(chan struct{})
+	go func() {
+		select {
+		case <-ctx.Done():
+			_ = conn.Close() // interrupt ReadMessage so Run can finish shutdown
+		case <-serveDone:
+		}
+	}()
+	defer close(serveDone)
 
 	// Heartbeat keeps the DO presence fresh.
 	stop := make(chan struct{})
-	go w.heartbeat(stop)
+	go w.heartbeat(ctx, stop)
 	defer close(stop)
 	defer conn.Close()
 
@@ -77,16 +104,51 @@ func (w *WSClient) connectAndServe() error {
 	}
 }
 
-func (w *WSClient) heartbeat(stop <-chan struct{}) {
-	t := time.NewTicker(30 * time.Second)
+func (w *WSClient) heartbeat(ctx context.Context, stop <-chan struct{}) {
+	d := time.Duration(w.cfg.HeartbeatEvery) * time.Second
+	t := time.NewTicker(d)
 	defer t.Stop()
 	for {
 		select {
+		case <-ctx.Done():
+			return
 		case <-stop:
 			return
+		case next := <-w.heartbeatUpdate:
+			if next <= 0 {
+				continue
+			}
+			t.Stop()
+			t = time.NewTicker(next)
 		case <-t.C:
 			_ = w.send(Heartbeat{Type: "heartbeat"})
 		}
+	}
+}
+
+// SetHeartbeatInterval applies a new heartbeat cadence without reconnecting.
+func (w *WSClient) SetHeartbeatInterval(d time.Duration) {
+	select {
+	case w.heartbeatUpdate <- d:
+	default:
+		select {
+		case <-w.heartbeatUpdate:
+		default:
+		}
+		select {
+		case w.heartbeatUpdate <- d:
+		default:
+		}
+	}
+}
+
+// Stop breaks any blocking WebSocket read so Run can observe context shutdown.
+func (w *WSClient) Stop() {
+	w.mu.Lock()
+	conn := w.conn
+	w.mu.Unlock()
+	if conn != nil {
+		_ = conn.Close()
 	}
 }
 

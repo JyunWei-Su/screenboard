@@ -18,9 +18,7 @@ import (
 const updateHelper = "/usr/local/bin/screenboard-apply-update"
 
 // MaybeUpdate checks for and, if authorized + verified, installs a new agent
-// binary, then exits so the service manager restarts the fresh version.
-// The boolean is true only when an update was available (the successful path
-// exits the process after installation).
+// binary. The caller owns the graceful restart after installation.
 func MaybeUpdate(client *Client, onUpdateAvailable func(version string)) (bool, error) {
 	upd, err := client.CheckUpdate(AgentVersion)
 	if err != nil {
@@ -57,8 +55,7 @@ func MaybeUpdate(client *Client, onUpdateAvailable func(version string)) (bool, 
 	if err := installBinary(staged, data); err != nil {
 		return false, fmt.Errorf("install: %w", err)
 	}
-	log.Printf("ota: installed %s, restarting", upd.Version)
-	os.Exit(0)
+	log.Printf("ota: installed %s", upd.Version)
 	return true, nil
 }
 

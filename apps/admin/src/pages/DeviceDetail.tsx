@@ -19,6 +19,8 @@ interface Device {
   ip: string;
   mac: string;
   resolution: string;
+  protocol_version?: number | null;
+  agent_capabilities?: string | null;
   group_id: number | null;
   // New scene assignment fields (migration 0008). `source_type` drives which one
   // is active; the API clears the other two when the source type is switched.
@@ -28,7 +30,16 @@ interface Device {
   display: string;
   agent_settings: string;
   last_seen_at: string | null;
-  health?: { cpu: number; memory: number; disk: number; uptime: number; ts: string } | null;
+  health?: {
+    cpu: number; memory: number; disk: number; uptime: number; ts: string;
+    temperature?: number | null;
+    chromium_status?: string | null;
+    browser_restart_count?: number | null;
+    browser_last_exit_at?: string | null;
+    last_sync_success_at?: string | null;
+    cache_used_bytes?: number | null;
+    cache_limit_bytes?: number | null;
+  } | null;
 }
 interface ScreenshotRow { id: number; taken_at: string; analysis: string | null; trigger: string }
 interface CommandRow { id: string; type: string; status: string; detail?: string | null; issued_at: string }
@@ -36,7 +47,9 @@ interface CommandPage { items: CommandRow[]; page: number; limit: number; total:
 interface NamedRow { id: number; name: string }
 interface AgentSettings {
   health_interval_sec: number;
+  device_info_interval_sec: number;
   playlist_poll_sec: number;
+  heartbeat_interval_sec: number;
   screenshot_interval_sec: number;
   ota_check_sec: number;
 }
@@ -366,6 +379,12 @@ export default function DeviceDetail() {
             {d.health && (
               <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-3">
                 <Meter label="CPU" v={d.health.cpu} />
+                <Info k="Chromium" v={d.health.chromium_status ?? "—"} />
+                <Info k="Browser restarts" v={String(d.health.browser_restart_count ?? 0)} />
+                <Info k="Last browser exit" v={d.health.browser_last_exit_at ?? "—"} />
+                <Info k="Last content sync" v={d.health.last_sync_success_at ?? "—"} />
+                <Info k="Temperature" v={d.health.temperature == null ? "—" : `${d.health.temperature.toFixed(1)} °C`} />
+                <Info k="Cache" v={`${d.health.cache_used_bytes ?? 0} / ${d.health.cache_limit_bytes ?? 0} bytes`} />
                 <Meter label="記憶體" v={d.health.memory} />
                 <Meter label="磁碟" v={d.health.disk} />
               </div>
@@ -554,7 +573,9 @@ export default function DeviceDetail() {
             <h2 className="mb-2 text-sm font-semibold text-slate-700 dark:text-slate-200">監控與更新週期</h2>
             <div className="grid grid-cols-1 gap-2 text-sm sm:grid-cols-2">
               <IntervalInput label="健康回報" value={agentSettings.health_interval_sec} min={10} onChange={(value) => setAgentSettings({ ...agentSettings, health_interval_sec: value })} disabled={!writable} />
-              <IntervalInput label="播放清單同步" value={agentSettings.playlist_poll_sec} min={10} onChange={(value) => setAgentSettings({ ...agentSettings, playlist_poll_sec: value })} disabled={!writable} />
+              <IntervalInput label="裝置資訊（含解析度）回報" value={agentSettings.device_info_interval_sec} min={60} onChange={(value) => setAgentSettings({ ...agentSettings, device_info_interval_sec: value })} disabled={!writable} />
+              <IntervalInput label="播放目標檢查" value={agentSettings.playlist_poll_sec} min={10} onChange={(value) => setAgentSettings({ ...agentSettings, playlist_poll_sec: value })} disabled={!writable} />
+              <IntervalInput label="WebSocket 心跳" value={agentSettings.heartbeat_interval_sec} min={10} max={60} onChange={(value) => setAgentSettings({ ...agentSettings, heartbeat_interval_sec: value })} disabled={!writable} />
               <IntervalInput label="自動截圖" value={agentSettings.screenshot_interval_sec} min={0} onChange={(value) => setAgentSettings({ ...agentSettings, screenshot_interval_sec: value })} disabled={!writable} />
               <IntervalInput label="OTA 更新檢查" value={agentSettings.ota_check_sec} min={60} onChange={(value) => setAgentSettings({ ...agentSettings, ota_check_sec: value })} disabled={!writable} />
             </div>
@@ -749,7 +770,9 @@ function safeParse(s: string): { kiosk: boolean; zoom: number; rotate: number; s
 
 const DEFAULT_AGENT_SETTINGS: AgentSettings = {
   health_interval_sec: 60,
+  device_info_interval_sec: 300,
   playlist_poll_sec: 30,
+  heartbeat_interval_sec: 30,
   screenshot_interval_sec: 0,
   ota_check_sec: 1800,
 };
@@ -763,11 +786,11 @@ function safeAgentSettings(s: string): AgentSettings {
   }
 }
 
-function IntervalInput({ label, value, min, disabled, onChange }: { label: string; value: number; min: number; disabled: boolean; onChange: (value: number) => void }) {
+function IntervalInput({ label, value, min, max = 86400, disabled, onChange }: { label: string; value: number; min: number; max?: number; disabled: boolean; onChange: (value: number) => void }) {
   return (
     <label className="block">
       <span className="mb-1 block text-xs text-slate-500">{label}（秒）</span>
-      <input className="input" type="number" min={min} max={86400} step="1" value={value} disabled={disabled} onChange={(e) => onChange(Number(e.target.value))} />
+      <input className="input" type="number" min={min} max={max} step="1" value={value} disabled={disabled} onChange={(e) => onChange(Number(e.target.value))} />
     </label>
   );
 }

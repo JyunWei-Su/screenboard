@@ -8,7 +8,6 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
-	"syscall"
 	"time"
 )
 
@@ -16,13 +15,15 @@ import (
 func CollectDeviceInfo() DeviceInfo {
 	host, _ := os.Hostname()
 	return DeviceInfo{
-		Hostname:     host,
-		Serial:       readSerial(),
-		OSVersion:    readOSVersion(),
-		AgentVersion: AgentVersion,
-		IP:           outboundIP(),
-		MAC:          primaryMAC(),
-		Resolution:   screenResolution(),
+		Hostname:        host,
+		Serial:          readSerial(),
+		OSVersion:       readOSVersion(),
+		AgentVersion:    AgentVersion,
+		IP:              outboundIP(),
+		MAC:             primaryMAC(),
+		Resolution:      screenResolution(),
+		ProtocolVersion: ProtocolVersion,
+		Capabilities:    AgentCapabilities,
 	}
 }
 
@@ -94,15 +95,41 @@ func screenResolution() string {
 	return ""
 }
 
-// CollectHealth samples CPU/memory/disk/uptime and a connectivity probe.
+// CollectHealth samples CPU/memory/disk/uptime, a connectivity probe, and the
+// SoC temperature when readable. Runtime status (browser, cache, last sync) is
+// layered on by the agent, which owns that state.
 func CollectHealth(serverHost string) HealthSample {
 	return HealthSample{
-		CPU:    cpuUsage(),
-		Memory: memUsage(),
-		Disk:   diskUsage("/"),
-		NetOK:  netOK(serverHost),
-		Uptime: uptimeSeconds(),
+		CPU:         cpuUsage(),
+		Memory:      memUsage(),
+		Disk:        diskUsage("/"),
+		NetOK:       netOK(serverHost),
+		Uptime:      uptimeSeconds(),
+		Temperature: cpuTemperature(),
 	}
+}
+
+// cpuTemperature reads the SoC temperature in Celsius from the standard thermal
+// zone Raspberry Pi and many ARM boards expose. It returns nil on hardware that
+// has no readable zone, so health omits the field rather than reporting a
+// misleading zero.
+func cpuTemperature() *float64 {
+	for _, path := range []string{
+		"/sys/class/thermal/thermal_zone0/temp",
+		"/sys/class/hwmon/hwmon0/temp1_input",
+	} {
+		b, err := os.ReadFile(path)
+		if err != nil {
+			continue
+		}
+		milli, err := strconv.ParseFloat(strings.TrimSpace(string(b)), 64)
+		if err != nil || milli <= 0 {
+			continue
+		}
+		c := milli / 1000
+		return &c
+	}
+	return nil
 }
 
 func readCPUTimes() (idle, total uint64) {
@@ -161,19 +188,6 @@ func memUsage() float64 {
 		return 0
 	}
 	return (1 - avail/total) * 100
-}
-
-func diskUsage(path string) float64 {
-	var st syscall.Statfs_t
-	if err := syscall.Statfs(path, &st); err != nil {
-		return 0
-	}
-	total := float64(st.Blocks) * float64(st.Bsize)
-	free := float64(st.Bavail) * float64(st.Bsize)
-	if total == 0 {
-		return 0
-	}
-	return (1 - free/total) * 100
 }
 
 func uptimeSeconds() int64 {

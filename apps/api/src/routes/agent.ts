@@ -27,19 +27,26 @@ app.post("/health", async (c) => {
   const netOk = h.net_ok ? 1 : 0;
 
   await c.env.DB.prepare(
-    `INSERT INTO device_health_latest (device_id, cpu, memory, disk, net_ok, uptime, ts)
-     VALUES (?, ?, ?, ?, ?, ?, datetime('now'))
+    `INSERT INTO device_health_latest (device_id, cpu, memory, disk, net_ok, uptime, temperature, chromium_status, browser_restart_count, browser_last_exit_at, last_sync_success_at, cache_used_bytes, cache_limit_bytes, ts)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
      ON CONFLICT(device_id) DO UPDATE SET
        cpu=excluded.cpu, memory=excluded.memory, disk=excluded.disk,
-       net_ok=excluded.net_ok, uptime=excluded.uptime, ts=excluded.ts`,
+       net_ok=excluded.net_ok, uptime=excluded.uptime, temperature=excluded.temperature,
+       chromium_status=excluded.chromium_status, browser_restart_count=excluded.browser_restart_count, browser_last_exit_at=excluded.browser_last_exit_at,
+       last_sync_success_at=excluded.last_sync_success_at, cache_used_bytes=excluded.cache_used_bytes,
+       cache_limit_bytes=excluded.cache_limit_bytes, ts=excluded.ts`,
   )
-    .bind(uuid, h.cpu, h.memory, h.disk, netOk, h.uptime)
+    .bind(uuid, h.cpu, h.memory, h.disk, netOk, h.uptime, h.temperature ?? null,
+      h.chromium_status ?? null, h.browser_restart_count ?? null, h.browser_last_exit_at ?? null, h.last_sync_success_at ?? null,
+      h.cache_used_bytes ?? null, h.cache_limit_bytes ?? null)
     .run();
 
   await c.env.DB.prepare(
-    "INSERT INTO device_health_history (device_id, cpu, memory, disk, net_ok, uptime) VALUES (?, ?, ?, ?, ?, ?)",
+    "INSERT INTO device_health_history (device_id, cpu, memory, disk, net_ok, uptime, temperature, chromium_status, browser_restart_count, browser_last_exit_at, last_sync_success_at, cache_used_bytes, cache_limit_bytes) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
   )
-    .bind(uuid, h.cpu, h.memory, h.disk, netOk, h.uptime)
+    .bind(uuid, h.cpu, h.memory, h.disk, netOk, h.uptime, h.temperature ?? null,
+      h.chromium_status ?? null, h.browser_restart_count ?? null, h.browser_last_exit_at ?? null, h.last_sync_success_at ?? null,
+      h.cache_used_bytes ?? null, h.cache_limit_bytes ?? null)
     .run();
 
   // Threshold alerts (deduped: at most one per type per device per 30 min).
@@ -72,19 +79,8 @@ app.post("/health", async (c) => {
   return c.json({ ok: true });
 });
 
-// X11 is not available during first-boot enrollment. Update resolution after
-// the kiosk session has started and whenever the display mode changes.
-app.post("/display-info", async (c) => {
-  const resolution = (await c.req.json<{ resolution?: string }>()).resolution?.trim() || "";
-  if (!/^\d{2,5}x\d{2,5}$/.test(resolution)) return c.json({ error: "invalid_resolution" }, 400);
-  await c.env.DB.prepare("UPDATE devices SET resolution = ? WHERE uuid = ?")
-    .bind(resolution, c.get("deviceUuid"))
-    .run();
-  return c.json({ ok: true });
-});
-
 // Refresh mutable device-page information after reloads, OTA updates, and
-// network changes. The device token limits this update to its own record.
+// network changes. This also refreshes display resolution after X11 starts.
 app.post("/info", async (c) => {
   const info = await c.req.json<{
     hostname?: string;
@@ -94,6 +90,8 @@ app.post("/info", async (c) => {
     ip?: string;
     mac?: string;
     resolution?: string;
+    protocol_version?: number;
+    capabilities?: string[];
   }>();
   const resolution = info.resolution?.trim() || "";
   if (resolution && !/^\d{2,5}x\d{2,5}$/.test(resolution)) {
@@ -104,6 +102,7 @@ app.post("/info", async (c) => {
      serial = COALESCE(NULLIF(?, ''), serial), os_version = COALESCE(NULLIF(?, ''), os_version),
      agent_version = COALESCE(NULLIF(?, ''), agent_version), ip = COALESCE(NULLIF(?, ''), ip),
      mac = COALESCE(NULLIF(?, ''), mac), resolution = CASE WHEN ? = '' THEN resolution ELSE ? END,
+     protocol_version = COALESCE(?, protocol_version), agent_capabilities = COALESCE(?, agent_capabilities),
      last_seen_at = datetime('now') WHERE uuid = ?`,
   )
     .bind(
@@ -115,6 +114,8 @@ app.post("/info", async (c) => {
       info.mac || "",
       resolution,
       resolution,
+      Number.isInteger(info.protocol_version) ? info.protocol_version : null,
+      Array.isArray(info.capabilities) ? JSON.stringify(info.capabilities) : null,
       c.get("deviceUuid"),
     )
     .run();

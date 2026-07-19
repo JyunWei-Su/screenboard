@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"os/exec"
 	"strings"
-	"syscall"
 )
 
 // Root-owned helper scripts installed by install.sh and granted to the kiosk
@@ -41,7 +40,7 @@ func Reinstall() error {
 		return fmt.Errorf("sudo unavailable: %w", err)
 	}
 	cmd := exec.Command("sudo", "-n", reinstallHelper)
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	cmd.SysProcAttr = detachAttr()
 	return cmd.Start()
 }
 

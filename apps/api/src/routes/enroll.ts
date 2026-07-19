@@ -70,8 +70,8 @@ app.post("/enroll", async (c) => {
   const refreshHash = await sha256Hex(refresh);
 
   await c.env.DB.prepare(
-    `INSERT INTO devices (uuid, name, hostname, serial, os_version, agent_version, ip, mac, resolution, group_id, display, refresh_token, status)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'offline')`,
+    `INSERT INTO devices (uuid, name, hostname, serial, os_version, agent_version, ip, mac, resolution, protocol_version, agent_capabilities, group_id, display, refresh_token, status)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'offline')`,
   )
     .bind(
       uuid,
@@ -85,6 +85,8 @@ app.post("/enroll", async (c) => {
       info.ip,
       info.mac,
       info.resolution,
+      info.protocol_version ?? null,
+      info.capabilities ? JSON.stringify(info.capabilities) : null,
       tok.group_id,
       display,
       refreshHash,

@@ -158,8 +158,8 @@ Prerequisite (once): build the agent and upload it via the admin **OTA** page so
 API can serve it (`channel=stable`):
 
 ```bash
-bash scripts/build-agent.sh 0.1.0 amd64
-# then admin console → OTA → upload dist/screenboard-agent-linux-amd64-v0.1.0
+bash scripts/build-agent.sh amd64
+# then admin console → OTA → upload the generated dist/screenboard-agent-linux-amd64-v<version>
 # (the OTA page reads the version from the filename automatically)
 ```
 

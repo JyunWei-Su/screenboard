@@ -2,6 +2,21 @@ package main
 
 // Wire types shared with the Workers API (see packages/shared/src/index.ts).
 
+// ProtocolVersion is the wire-contract version this agent speaks. The server
+// records it at enroll/info so a mixed-version fleet can be reasoned about.
+const ProtocolVersion = 1
+
+// AgentCapabilities enumerates the command types and features this build
+// supports. The server gates newer commands to agents that advertise them, so a
+// 0.1.x agent (which advertises nothing) is never sent something it cannot run.
+var AgentCapabilities = []string{
+	"reload", "switch_scene", "reboot", "shutdown", "restart_player",
+	"take_screenshot", "check_update", "sync_time", "set_hostname",
+	"apply_display", "apply_agent_settings", "repair_tunnel", "reinstall",
+	// Feature flags beyond raw command types.
+	"browser_supervision", "cache_manager", "temperature",
+}
+
 type DeviceInfo struct {
 	Hostname     string `json:"hostname"`
 	Serial       string `json:"serial"`
@@ -10,6 +25,10 @@ type DeviceInfo struct {
 	IP           string `json:"ip"`
 	MAC          string `json:"mac"`
 	Resolution   string `json:"resolution"`
+	// Forward-compatibility for mixed-version fleets: the server records these so
+	// it can gate newer commands to agents that actually advertise support.
+	ProtocolVersion int      `json:"protocol_version,omitempty"`
+	Capabilities    []string `json:"capabilities,omitempty"`
 }
 
 type EnrollRequest struct {
@@ -31,6 +50,15 @@ type HealthSample struct {
 	Disk   float64 `json:"disk"`
 	NetOK  bool    `json:"net_ok"`
 	Uptime int64   `json:"uptime"`
+	// 0.2 operability fields. Temperature is a pointer so a non-Pi device (no
+	// readable thermal zone) omits it rather than reporting a misleading 0.
+	Temperature         *float64 `json:"temperature,omitempty"`
+	ChromiumStatus      string   `json:"chromium_status,omitempty"`
+	BrowserRestartCount int      `json:"browser_restart_count,omitempty"`
+	BrowserLastExitAt   string   `json:"browser_last_exit_at,omitempty"`
+	LastSyncSuccessAt   string   `json:"last_sync_success_at,omitempty"` // RFC3339, last successful content sync
+	CacheUsedBytes      int64    `json:"cache_used_bytes,omitempty"`
+	CacheLimitBytes     int64    `json:"cache_limit_bytes,omitempty"`
 }
 
 type PlaylistItem struct {

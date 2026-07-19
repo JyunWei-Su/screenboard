@@ -4,14 +4,18 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"log"
+	"os"
+	"os/signal"
+	"syscall"
 )
 
 // AgentVersion is stamped into enrollment/health and compared during OTA checks.
 // Override at build time: go build -ldflags "-X main.AgentVersion=1.2.3".
-var AgentVersion = "0.1.0"
+var AgentVersion = "dev"
 
 func main() {
 	cfgPath := flag.String("config", "/etc/screenboard/agent.json", "path to agent config JSON")
@@ -45,5 +49,9 @@ func main() {
 		}
 		return
 	}
-	agent.Run()
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	if err := agent.Run(ctx); err != nil {
+		log.Printf("agent stopped: %v", err)
+	}
 }

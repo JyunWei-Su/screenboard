@@ -13,7 +13,6 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -29,12 +28,16 @@ type Player struct {
 	client *Client
 
 	mu           sync.Mutex
+	updateMu     sync.Mutex        // serializes target downloads and cache commits
 	current      *ResolvedPlaylist // legacy playlist (served at /playlist.json)
 	target       *ResolvedTarget   // full resolved target (served at /target.json)
 	fileMap      map[int]string    // playlist item id / scene media id -> local cached file path
 	proxyAllow   map[string]bool   // hostnames the active scene may proxy through
-	chromium     *exec.Cmd
 	notification PlayerNotification
+	server       *http.Server
+
+	browser *Browser      // supervises the kiosk browser process
+	cache   *CacheManager // media cache with retention + byte cap
 
 	onPlayback func(PlaybackEvent) // relayed over the WS channel
 }
@@ -49,11 +52,41 @@ type PlayerNotification struct {
 }
 
 func NewPlayer(cfg *Config, client *Client) *Player {
-	return &Player{
+	p := &Player{
 		cfg:        cfg,
 		client:     client,
 		fileMap:    map[int]string{},
 		proxyAllow: map[string]bool{},
+		cache:      NewCacheManager(cfg, client),
+	}
+	// The browser is relaunched with the current display settings; reapply
+	// rotation before each launch so an orientation change survives a restart.
+	p.browser = NewBrowser(cfg, p.applyRotation)
+	return p
+}
+
+// StartBrowser begins supervising the kiosk browser (launch + crash recovery).
+func (p *Player) StartBrowser() { p.browser.Start() }
+
+// RestartBrowser performs an operator-requested relaunch (not counted a crash).
+func (p *Player) RestartBrowser() { p.browser.Relaunch() }
+
+// BrowserStatus reports the supervised browser's state for health.
+func (p *Player) BrowserStatus() BrowserStatus { return p.browser.Status() }
+
+// CacheStats reports media-cache usage for health.
+func (p *Player) CacheStats() CacheStats { return p.cache.Stats() }
+
+// Stop closes the local HTTP server and waits for Chromium to be reaped.
+func (p *Player) Stop(ctx context.Context) {
+	p.browser.Stop()
+	p.mu.Lock()
+	server := p.server
+	p.mu.Unlock()
+	if server != nil {
+		if err := server.Shutdown(ctx); err != nil {
+			log.Printf("player server shutdown: %v", err)
+		}
 	}
 }
 
@@ -76,9 +109,13 @@ func (p *Player) StartServer() {
 	mux.HandleFunc("/notification.json", p.handleNotification)
 
 	addr := fmt.Sprintf("127.0.0.1:%d", p.cfg.PlayerPort)
+	server := &http.Server{Addr: addr, Handler: mux}
+	p.mu.Lock()
+	p.server = server
+	p.mu.Unlock()
 	go func() {
 		log.Printf("player server listening on %s", addr)
-		if err := http.ListenAndServe(addr, mux); err != nil {
+		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			log.Printf("player server error: %v", err)
 		}
 	}()
@@ -234,66 +271,62 @@ func (p *Player) handleEvent(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(204)
 }
 
-// SetPlaylist caches any new media and swaps in the new playlist for the player.
-func (p *Player) SetPlaylist(pl *ResolvedPlaylist) {
+// SetPlaylist caches the playlist's media to completion and, only on success,
+// swaps in the new playlist. It returns false when caching failed so the caller
+// keeps serving the current content. A same-revision playlist is a no-op.
+func (p *Player) SetPlaylist(pl *ResolvedPlaylist) bool {
 	p.mu.Lock()
 	sameRev := p.current != nil && p.current.Revision == pl.Revision
 	p.mu.Unlock()
 	if sameRev {
-		return
+		return true
 	}
 
-	if err := os.MkdirAll(p.cfg.CacheDir, 0o755); err != nil {
-		log.Printf("cache dir: %v", err)
-	}
-	fileMap := map[int]string{}
-	for _, it := range pl.Items {
-		if !strings.Contains(it.Source, "/api/content/media/") {
-			continue // external URL/html — the browser loads it directly
-		}
-		dest := filepath.Join(p.cfg.CacheDir, fmt.Sprintf("%s_%d", pl.Revision, it.ID))
-		if _, err := os.Stat(dest); err != nil {
-			if err := p.client.DownloadTo(it.Source, dest); err != nil {
-				log.Printf("download item %d: %v", it.ID, err)
-				continue
-			}
-		}
-		fileMap[it.ID] = dest
+	fileMap, err := p.cache.Prepare(playlistRefs(pl))
+	if err != nil {
+		log.Printf("playlist %s: cache prepare failed, keeping current content: %v", pl.Revision, err)
+		return false
 	}
 
 	p.mu.Lock()
 	p.current = pl
 	p.fileMap = fileMap
 	p.mu.Unlock()
+	p.cache.Commit(pathsOf(fileMap))
 	log.Printf("playlist updated: %s (%d items, rev %s)", pl.Name, len(pl.Items), pl.Revision)
+	return true
 }
 
 // SetTarget applies whatever a device currently resolves to: a legacy playlist,
-// a single scene, a scene playlist, or nothing. Media referenced by each shape
-// is cached locally (like SetPlaylist) so playback survives a network drop.
-func (p *Player) SetTarget(t *ResolvedTarget) {
+// a single scene, a scene playlist, or nothing. Each target's media is cached to
+// completion before the swap, so a failed download leaves the screen unchanged.
+func (p *Player) SetTarget(t *ResolvedTarget) bool {
+	p.updateMu.Lock()
+	defer p.updateMu.Unlock()
 	if t == nil {
-		return
+		return false
 	}
 	switch t.Kind {
 	case "playlist":
 		if t.Playlist == nil {
 			p.clearTarget()
-			return
+			return true
 		}
-		// Reuse the legacy playlist path verbatim so back-compat behaviour is
-		// byte-for-byte identical, then record the target for /target.json.
-		p.SetPlaylist(t.Playlist)
+		if !p.SetPlaylist(t.Playlist) {
+			return false // caching failed; current content preserved
+		}
 		p.mu.Lock()
 		p.target = t
 		p.proxyAllow = map[string]bool{}
 		p.mu.Unlock()
+		return true
 	case "scene":
-		p.setScene(t)
+		return p.setScene(t)
 	case "scene_playlist":
-		p.setScenePlaylist(t)
+		return p.setScenePlaylist(t)
 	default: // "none" or unknown
 		p.clearTarget()
+		return true
 	}
 }
 
@@ -304,26 +337,27 @@ func (p *Player) clearTarget() {
 	p.fileMap = map[int]string{}
 	p.proxyAllow = map[string]bool{}
 	p.mu.Unlock()
+	p.cache.Commit(nil)
 }
 
-func (p *Player) setScene(t *ResolvedTarget) {
+func (p *Player) setScene(t *ResolvedTarget) bool {
 	sc := t.Scene
 	if sc == nil {
 		p.clearTarget()
-		return
+		return true
 	}
 	p.mu.Lock()
 	same := p.target != nil && p.target.Kind == "scene" && p.target.Scene != nil &&
 		p.target.Scene.Revision == sc.Revision
 	p.mu.Unlock()
 	if same {
-		return
+		return true
 	}
-	if err := os.MkdirAll(p.cfg.CacheDir, 0o755); err != nil {
-		log.Printf("cache dir: %v", err)
+	fileMap, err := p.cache.Prepare(sceneRefs(*sc))
+	if err != nil {
+		log.Printf("scene %s: cache prepare failed, keeping current content: %v", sc.Revision, err)
+		return false
 	}
-	fileMap := map[int]string{}
-	p.cacheSceneInto(*sc, fileMap)
 	allow := proxyAllowForScene(*sc)
 
 	p.mu.Lock()
@@ -332,32 +366,36 @@ func (p *Player) setScene(t *ResolvedTarget) {
 	p.fileMap = fileMap
 	p.proxyAllow = allow
 	p.mu.Unlock()
+	p.cache.Commit(pathsOf(fileMap))
 	log.Printf("scene updated: %s (%d widgets, rev %s)", sc.Name, len(sc.Widgets), sc.Revision)
+	return true
 }
 
-func (p *Player) setScenePlaylist(t *ResolvedTarget) {
+func (p *Player) setScenePlaylist(t *ResolvedTarget) bool {
 	spl := t.ScenePlaylist
 	if spl == nil {
 		p.clearTarget()
-		return
+		return true
 	}
 	p.mu.Lock()
 	same := p.target != nil && p.target.Kind == "scene_playlist" && p.target.ScenePlaylist != nil &&
 		p.target.ScenePlaylist.Revision == spl.Revision
 	p.mu.Unlock()
 	if same {
-		return
+		return true
 	}
-	if err := os.MkdirAll(p.cfg.CacheDir, 0o755); err != nil {
-		log.Printf("cache dir: %v", err)
-	}
-	fileMap := map[int]string{}
+	var refs []MediaRef
 	allow := map[string]bool{}
 	for _, entry := range spl.Scenes {
-		p.cacheSceneInto(entry.Scene, fileMap)
+		refs = append(refs, sceneRefs(entry.Scene)...)
 		for h := range proxyAllowForScene(entry.Scene) {
 			allow[h] = true
 		}
+	}
+	fileMap, err := p.cache.Prepare(refs)
+	if err != nil {
+		log.Printf("scene playlist %s: cache prepare failed, keeping current content: %v", spl.Revision, err)
+		return false
 	}
 
 	p.mu.Lock()
@@ -366,17 +404,33 @@ func (p *Player) setScenePlaylist(t *ResolvedTarget) {
 	p.fileMap = fileMap
 	p.proxyAllow = allow
 	p.mu.Unlock()
+	p.cache.Commit(pathsOf(fileMap))
 	log.Printf("scene playlist updated: %s (%d scenes, rev %s)", spl.Name, len(spl.Scenes), spl.Revision)
+	return true
 }
 
-// cacheSceneInto downloads any media-backed source (background + widgets) that
-// points at the API media endpoint, keyed by media id, into fileMap.
-func (p *Player) cacheSceneInto(sc ResolvedScene, fileMap map[int]string) {
-	type mediaRef struct {
-		id  int
-		url string
+// playlistRefs lists the cacheable media in a playlist. External URLs/HTML the
+// browser loads directly are skipped. The cache key embeds the revision so a
+// content change downloads fresh files while a restart reuses the existing ones.
+func playlistRefs(pl *ResolvedPlaylist) []MediaRef {
+	var refs []MediaRef
+	for _, it := range pl.Items {
+		if !strings.Contains(it.Source, "/api/content/media/") {
+			continue
+		}
+		refs = append(refs, MediaRef{
+			ID:  it.ID,
+			URL: it.Source,
+			Key: fmt.Sprintf("%s_%d", pl.Revision, it.ID),
+		})
 	}
-	var refs []mediaRef
+	return refs
+}
+
+// sceneRefs lists the cacheable media referenced by a scene's background and
+// widgets (media-backed sources pointing at the API media endpoint).
+func sceneRefs(sc ResolvedScene) []MediaRef {
+	var refs []MediaRef
 	collect := func(m map[string]interface{}) {
 		if m == nil {
 			return
@@ -386,26 +440,27 @@ func (p *Player) cacheSceneInto(sc ResolvedScene, fileMap map[int]string) {
 			return
 		}
 		if id, ok := mediaIDFromURL(s); ok {
-			refs = append(refs, mediaRef{id: id, url: s})
+			refs = append(refs, MediaRef{
+				ID:  id,
+				URL: s,
+				Key: fmt.Sprintf("scene_%s_%d", sc.Revision, id),
+			})
 		}
 	}
 	collect(sc.Background)
 	for _, wdg := range sc.Widgets {
 		collect(wdg.Config)
 	}
-	for _, ref := range refs {
-		if _, done := fileMap[ref.id]; done {
-			continue
-		}
-		dest := filepath.Join(p.cfg.CacheDir, fmt.Sprintf("scene_%s_%d", sc.Revision, ref.id))
-		if _, err := os.Stat(dest); err != nil {
-			if err := p.client.DownloadTo(ref.url, dest); err != nil {
-				log.Printf("download scene media %d: %v", ref.id, err)
-				continue
-			}
-		}
-		fileMap[ref.id] = dest
+	return refs
+}
+
+// pathsOf returns the unique local file paths in a fileMap.
+func pathsOf(fileMap map[int]string) []string {
+	paths := make([]string, 0, len(fileMap))
+	for _, p := range fileMap {
+		paths = append(paths, p)
 	}
+	return paths
 }
 
 // mediaIDFromURL extracts the numeric media id from a .../api/content/media/<id>
@@ -612,55 +667,14 @@ func isBlockedIP(ip net.IP) bool {
 		ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() || ip.IsMulticast()
 }
 
-// LaunchChromium (re)starts the kiosk browser with current display settings.
-func (p *Player) LaunchChromium() {
-	p.mu.Lock()
-	if p.chromium != nil && p.chromium.Process != nil {
-		_ = p.chromium.Process.Kill()
-	}
-	p.mu.Unlock()
-
-	p.applyRotation()
-
-	url := fmt.Sprintf("http://127.0.0.1:%d/", p.cfg.PlayerPort)
-	args := []string{
-		"--noerrdialogs",
-		"--disable-infobars",
-		"--disable-session-crashed-bubble",
-		"--disable-translate",
-		"--incognito",
-		"--user-data-dir=/tmp/screenboard-chromium",
-		// Paint the pre-first-paint surface black instead of Chromium's default
-		// white, so a cold (re)launch does not flash white before player.html's
-		// black background renders. Value is ARGB hex (opaque black).
-		"--default-background-color=FF000000",
-		fmt.Sprintf("--force-device-scale-factor=%.2f", p.cfg.Display.Zoom),
-	}
-	if p.cfg.Display.Kiosk {
-		args = append(args, "--kiosk")
-	}
-	args = append(args, "--app="+url)
-
-	cmd := exec.Command(p.cfg.ChromiumBin, args...)
-	cmd.Env = append(os.Environ(), "DISPLAY=:0")
-	if err := cmd.Start(); err != nil {
-		log.Printf("chromium start failed: %v", err)
-		return
-	}
-	p.mu.Lock()
-	p.chromium = cmd
-	p.mu.Unlock()
-	log.Printf("chromium launched: %s", url)
-}
-
 // Reload restarts the browser (simplest reliable reload for a kiosk).
-func (p *Player) Reload() { p.LaunchChromium() }
+func (p *Player) Reload() { p.browser.Relaunch() }
 
 // ApplyDisplay updates display settings and relaunches with them.
 func (p *Player) ApplyDisplay(d Display) {
 	p.cfg.Display = d
 	_ = p.cfg.Save()
-	p.LaunchChromium()
+	p.browser.Relaunch()
 }
 
 func (p *Player) applyRotation() {

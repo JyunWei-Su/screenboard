@@ -26,10 +26,13 @@ type Config struct {
 	Channel         string  `json:"channel,omitempty"`
 	PlayerPort      int     `json:"player_port,omitempty"`
 	HealthInterval  int     `json:"health_interval_sec,omitempty"`
+	DeviceInfoEvery int     `json:"device_info_interval_sec,omitempty"`
 	PlaylistPoll    int     `json:"playlist_poll_sec,omitempty"`
+	HeartbeatEvery  int     `json:"heartbeat_interval_sec,omitempty"`
 	ScreenshotEvery int     `json:"screenshot_interval_sec,omitempty"`
 	OTAEvery        int     `json:"ota_check_sec,omitempty"`
 	CacheDir        string  `json:"cache_dir,omitempty"`
+	CacheMaxBytes   int64   `json:"cache_max_bytes,omitempty"`
 	ChromiumBin     string  `json:"chromium_bin,omitempty"`
 	Display         Display `json:"display"`
 
@@ -58,8 +61,14 @@ func (c *Config) applyDefaults() {
 	if c.HealthInterval == 0 {
 		c.HealthInterval = 60
 	}
+	if c.DeviceInfoEvery == 0 {
+		c.DeviceInfoEvery = 300
+	}
 	if c.PlaylistPoll == 0 {
 		c.PlaylistPoll = 30
+	}
+	if c.HeartbeatEvery == 0 {
+		c.HeartbeatEvery = 30
 	}
 	if c.OTAEvery == 0 {
 		c.OTAEvery = 1800
@@ -69,6 +78,11 @@ func (c *Config) applyDefaults() {
 	}
 	if c.CacheDir == "" {
 		c.CacheDir = "/var/lib/screenboard/cache"
+	}
+	if c.CacheMaxBytes == 0 {
+		// Default media-cache ceiling. Signage runs unattended for months, so a
+		// bound keeps a growing scene/playlist history from filling the disk.
+		c.CacheMaxBytes = 2 << 30 // 2 GiB
 	}
 	if c.ChromiumBin == "" {
 		c.ChromiumBin = "chromium"

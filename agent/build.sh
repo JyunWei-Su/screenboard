@@ -3,7 +3,10 @@
 # Usage: ./build.sh [version] [amd64|arm64|all]
 set -euo pipefail
 
-VERSION="${1:-0.1.0}"
+# The repository-root VERSION file is managed by scripts/build-agent.sh. Keep
+# this lower-level compiler strict so a direct invocation cannot silently build
+# an incorrectly versioned OTA binary.
+VERSION="${1:?Usage: ./build.sh <version> [amd64|arm64|all]}"
 TARGET="${2:-all}"
 OUT="dist"
 mkdir -p "$OUT"

@@ -115,25 +115,8 @@ func (c *Client) PostHealth(h HealthSample) error {
 	return nil
 }
 
-// PostResolution updates display information after the X11 session is ready.
-func (c *Client) PostResolution(resolution string) error {
-	if resolution == "" {
-		return nil
-	}
-	body, _ := json.Marshal(map[string]string{"resolution": resolution})
-	resp, err := c.do("POST", "/api/agent/display-info", "application/json", body)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != 200 {
-		return fmt.Errorf("display info post: %s", resp.Status)
-	}
-	return nil
-}
-
 // PostDeviceInfo refreshes the device-page fields that can change after
-// enrollment, such as IP address and Agent version.
+// enrollment, including IP address, Agent version, and display resolution.
 func (c *Client) PostDeviceInfo(info DeviceInfo) error {
 	body, _ := json.Marshal(info)
 	resp, err := c.do("POST", "/api/agent/info", "application/json", body)
@@ -197,20 +180,32 @@ func (c *Client) CheckUpdate(current string) (*OtaUpdate, error) {
 	return out, nil
 }
 
-// DownloadTo streams an authenticated download (media / OTA) to a file.
+// DownloadTo streams an authenticated download (media / OTA) to a file. The
+// access token travels in an Authorization: Bearer header rather than the URL
+// query string, so it never lands in server or R2 access logs; a 401 triggers
+// one token refresh and retry.
 func (c *Client) DownloadTo(url, dest string) error {
-	// url is absolute; append the access token so <img>/binary endpoints accept it.
-	sep := "?"
-	if strings.Contains(url, "?") {
-		sep = "&"
+	get := func() (*http.Response, error) {
+		req, err := http.NewRequest("GET", url, nil)
+		if err != nil {
+			return nil, err
+		}
+		req.Header.Set("Authorization", "Bearer "+c.cfg.AccessToken)
+		return c.http.Do(req)
 	}
-	req, err := http.NewRequest("GET", url+sep+"token="+c.cfg.AccessToken, nil)
+	resp, err := get()
 	if err != nil {
 		return err
 	}
-	resp, err := c.http.Do(req)
-	if err != nil {
-		return err
+	if resp.StatusCode == http.StatusUnauthorized {
+		resp.Body.Close()
+		if err := c.refresh(); err != nil {
+			return err
+		}
+		resp, err = get()
+		if err != nil {
+			return err
+		}
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != 200 {

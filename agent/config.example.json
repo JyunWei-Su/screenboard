@@ -4,10 +4,13 @@
   "channel": "stable",
   "player_port": 8888,
   "health_interval_sec": 60,
+  "device_info_interval_sec": 300,
   "playlist_poll_sec": 30,
+  "heartbeat_interval_sec": 30,
   "screenshot_interval_sec": 0,
   "ota_check_sec": 1800,
   "cache_dir": "/var/lib/screenboard/cache",
+  "cache_max_bytes": 2147483648,
   "chromium_bin": "chromium",
   "display": {
     "kiosk": true,

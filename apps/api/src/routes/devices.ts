@@ -7,7 +7,9 @@ import type { CommandType } from "@screenboard/shared";
 
 type AgentSettings = {
   health_interval_sec: number;
+  device_info_interval_sec: number;
   playlist_poll_sec: number;
+  heartbeat_interval_sec: number;
   screenshot_interval_sec: number;
   ota_check_sec: number;
 };
@@ -19,15 +21,28 @@ function validInterval(value: unknown, min: number, max: number) {
 function parseAgentSettings(value: unknown): AgentSettings | null {
   if (!value || typeof value !== "object") return null;
   const settings = value as Record<string, unknown>;
+  const deviceInfoInterval = settings.device_info_interval_sec === undefined
+    ? 300
+    : settings.device_info_interval_sec;
+  const heartbeatInterval = settings.heartbeat_interval_sec === undefined
+    ? 30
+    : settings.heartbeat_interval_sec;
   if (
     !validInterval(settings.health_interval_sec, 10, 3600) ||
+    !validInterval(deviceInfoInterval, 60, 86400) ||
     !validInterval(settings.playlist_poll_sec, 10, 3600) ||
+    !validInterval(heartbeatInterval, 10, 60) ||
     !validInterval(settings.screenshot_interval_sec, 0, 86400) ||
     !validInterval(settings.ota_check_sec, 60, 86400)
   ) return null;
   return {
     health_interval_sec: settings.health_interval_sec as number,
+    // Settings stored before this field existed retain the established 5-minute
+    // device-info cadence when an operator saves them again.
+    device_info_interval_sec: deviceInfoInterval as number,
     playlist_poll_sec: settings.playlist_poll_sec as number,
+    // Keep heartbeats below the default 90-second offline watchdog.
+    heartbeat_interval_sec: heartbeatInterval as number,
     screenshot_interval_sec: settings.screenshot_interval_sec as number,
     ota_check_sec: settings.ota_check_sec as number,
   };
@@ -66,7 +81,7 @@ app.get("/:uuid", async (c) => {
     .first<{ uuid: string; group_id: number | null }>();
   if (!device) return c.json({ error: "not_found" }, 404);
   const health = await c.env.DB.prepare(
-    "SELECT cpu, memory, disk, net_ok, uptime, ts FROM device_health_latest WHERE device_id = ?",
+    "SELECT cpu, memory, disk, net_ok, uptime, temperature, chromium_status, browser_restart_count, browser_last_exit_at, last_sync_success_at, cache_used_bytes, cache_limit_bytes, ts FROM device_health_latest WHERE device_id = ?",
   )
     .bind(uuid)
     .first();
@@ -268,7 +283,7 @@ app.delete("/:uuid/commands/:id", requireRole("admin", "operator"), async (c) =>
 app.get("/:uuid/health", async (c) => {
   const hours = Number(c.req.query("hours") || "24");
   const rows = await c.env.DB.prepare(
-    `SELECT cpu, memory, disk, net_ok, uptime, ts FROM device_health_history
+    `SELECT cpu, memory, disk, net_ok, uptime, temperature, chromium_status, browser_restart_count, browser_last_exit_at, last_sync_success_at, cache_used_bytes, cache_limit_bytes, ts FROM device_health_history
      WHERE device_id = ? AND ts >= datetime('now', ?) ORDER BY ts`,
   )
     .bind(c.req.param("uuid"), `-${hours} hours`)
